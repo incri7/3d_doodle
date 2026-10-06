@@ -1,0 +1,5 @@
+.venv/
+__pycache__/
+*.blend1
+output/*/_tt/
+output/*/_view_*.png
