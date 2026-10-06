@@ -30,6 +30,7 @@ def main():
     ap.add_argument("--turntable", action="store_true")
     ap.add_argument("--no-export", action="store_true")
     ap.add_argument("--no-render", action="store_true")
+    ap.add_argument("--no-stills", action="store_true", help="skip hero/views (e.g. resuming a turntable)")
     ap.add_argument("--tex", type=int, default=2048, help="baked texture size")
     args = ap.parse_args()
 
@@ -46,8 +47,9 @@ def main():
 
     if not args.no_render:
         q = dict(samples=24, res=(800, 600)) if args.fast else {}
-        print("render:", render.hero(out, **q))
-        print("render:", render.views(out, **({"samples": 16, "res": (480, 360)} if args.fast else {})))
+        if not args.no_stills:
+            print("render:", render.hero(out, **q))
+            print("render:", render.views(out, **({"samples": 16, "res": (480, 360)} if args.fast else {})))
         if args.turntable:
             print("render:", render.turntable(out))
         print(f"rendered at {time.time() - t0:.1f}s")

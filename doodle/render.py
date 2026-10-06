@@ -114,8 +114,11 @@ def turntable(out_dir, frames=72, fps=24, samples=32, res=(800, 600), elevation=
     tmp = os.path.join(out_dir, "_tt")
     os.makedirs(tmp, exist_ok=True)
     for i in range(frames):  # last frame is one step before 360 -> perfect loop
+        path = os.path.join(tmp, f"{i:04d}.png")
+        if os.path.exists(path):  # resume an interrupted run (~25 s/frame on CPU)
+            continue
         frame(cam, -35 + 360 * i / frames, elevation)
-        still(os.path.join(tmp, f"{i:04d}.png"), cam)
+        still(path, cam)
     mp4 = os.path.join(out_dir, "turntable.mp4")
     subprocess.run(
         ["ffmpeg", "-y", "-loglevel", "error", "-framerate", str(fps), "-i", os.path.join(tmp, "%04d.png"),
