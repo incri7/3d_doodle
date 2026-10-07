@@ -1,0 +1,309 @@
+<meta charset="utf-8">
+<title>Agni Express 3D</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;700&family=Mukta:wght@400;600;800&display=swap">
+<style>
+  /* Layout: full-bleed 3D stage (a bus park at dusk) with a route-board nameplate
+     top-left, a spec plate bottom-right, and a dock of view chips along the bottom. */
+  :root {
+    --asphalt: #12161b;      /* page / sky at dusk */
+    --plate: rgba(20, 25, 31, 0.82);
+    --line: rgba(236, 233, 226, 0.14);
+    --fg: #ece9e2;
+    --muted: #9ba5af;
+    --agni: #e0322f;         /* Agni livery red */
+    --sodium: #f2b233;       /* bay markings, HEATER box yellow */
+    --display: "Oswald", "Arial Narrow", "Roboto Condensed", sans-serif;
+    --body: "Mukta", "Noto Sans Devanagari", system-ui, sans-serif;
+    color-scheme: dark;
+  }
+  [hidden] { display: none !important; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: var(--asphalt);
+    color: var(--fg);
+    font: 15px/1.45 var(--body);
+    overflow: hidden;
+  }
+  #stage { position: fixed; inset: 0; display: block; width: 100%; height: 100%; touch-action: none; }
+
+  .hud { position: fixed; inset: 0; pointer-events: none; display: grid;
+    grid-template-rows: auto 1fr auto; padding: calc(env(safe-area-inset-top, 0px) + 16px) 16px calc(env(safe-area-inset-bottom, 0px) + 16px); gap: 12px; }
+  .hud > * { pointer-events: auto; }
+  .top { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; pointer-events: none; }
+  .top > * { pointer-events: auto; }
+
+  .board { background: var(--plate); border: 1px solid var(--line); border-radius: 6px; padding: 10px 14px 11px;
+    backdrop-filter: blur(6px); max-width: min(420px, 100%); }
+  .board .eyebrow { font: 600 11px/1 var(--body); letter-spacing: .14em; text-transform: uppercase; color: var(--sodium); }
+  .board h1 { margin: 6px 0 2px; font: 700 clamp(26px, 5vw, 36px)/1 var(--display); letter-spacing: .04em; text-wrap: balance; }
+  .board h1 span { color: var(--agni); }
+  .route { display: flex; align-items: center; gap: 8px; font: 600 17px/1.2 var(--body); flex-wrap: wrap; }
+  .route .arrow { color: var(--muted); font-family: var(--display); }
+  .route small { color: var(--muted); font-weight: 400; font-size: 13px; }
+
+  .hint { font-size: 13px; color: var(--muted); background: var(--plate); border: 1px solid var(--line);
+    border-radius: 999px; padding: 6px 12px; }
+
+  .bottom { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; flex-wrap: wrap; pointer-events: none; }
+  .bottom > * { pointer-events: auto; }
+  .dock { display: flex; flex-direction: column; gap: 8px; min-width: 0; max-width: 100%; }
+  .chips { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; padding-bottom: 2px; }
+  .chips::-webkit-scrollbar { display: none; }
+  .chip { font: 500 14px/1 var(--display); letter-spacing: .06em; text-transform: uppercase; color: var(--fg);
+    background: var(--plate); border: 1px solid var(--line); border-radius: 4px; padding: 10px 12px; cursor: pointer;
+    white-space: nowrap; transition: border-color .15s, color .15s, background .15s; }
+  .chip:hover { border-color: var(--sodium); }
+  .chip[aria-pressed="true"] { background: var(--sodium); color: var(--asphalt); border-color: var(--sodium); }
+  .chip:focus-visible, .toggle input:focus-visible + span { outline: 2px solid var(--sodium); outline-offset: 2px; }
+  .toggles { display: flex; gap: 14px; flex-wrap: wrap; font-size: 14px; color: var(--muted); }
+  .toggle { display: inline-flex; align-items: center; gap: 7px; cursor: pointer; user-select: none; }
+  .toggle input { accent-color: var(--agni); width: 16px; height: 16px; margin: 0; }
+
+  .spec { background: var(--plate); border: 1px solid var(--line); border-radius: 6px; padding: 10px 14px;
+    display: grid; grid-template-columns: auto auto; gap: 3px 16px; font-size: 13px; }
+  .spec dt { color: var(--muted); }
+  .spec dd { margin: 0; text-align: right; font: 500 14px/1.45 var(--display); letter-spacing: .03em; font-variant-numeric: tabular-nums; }
+
+  .loader { position: fixed; inset: 0; display: grid; place-items: center; pointer-events: none; }
+  .loader-box { width: min(320px, calc(100% - 32px)); display: grid; gap: 8px; text-align: center; }
+  .loader-box p { margin: 0; font: 500 14px/1 var(--display); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+  .bar { height: 4px; border-radius: 2px; background: var(--line); overflow: hidden; }
+  .bar i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--agni), var(--sodium)); transition: width .2s; }
+  .error { color: var(--fg); background: var(--plate); border: 1px solid var(--agni); border-radius: 6px; padding: 12px 14px; font-size: 14px; }
+
+  @media (max-width: 620px) {
+    .hint { display: none; }
+    .spec { display: none; }
+    .board h1 { font-size: 26px; }
+  }
+</style>
+
+<canvas id="stage" aria-label="3D view of the Agni Express bus"></canvas>
+
+<div class="loader" id="loader">
+  <div class="loader-box">
+    <p id="loader-text">Bringing the bus into the bay…</p>
+    <div class="bar"><i id="bar"></i></div>
+  </div>
+</div>
+
+<div class="hud">
+  <div class="top">
+    <div class="board">
+      <div class="eyebrow">Super Agni · A/C VIP Sofa</div>
+      <h1>AGNI <span>EXPRESS</span></h1>
+      <div class="route">काठमाण्डौ <span class="arrow">→</span> काँकडभिट्टा <small>Kathmandu to Kakarbhitta</small></div>
+    </div>
+    <div class="hint">Drag to orbit · scroll or pinch to zoom · right-drag to pan</div>
+  </div>
+  <div></div>
+  <div class="bottom">
+    <div class="dock">
+      <div class="chips" role="group" aria-label="Camera views">
+        <button class="chip" data-view="hero" aria-pressed="true">Overview</button>
+        <button class="chip" data-view="front" aria-pressed="false">Front</button>
+        <button class="chip" data-view="door" aria-pressed="false">Door side</button>
+        <button class="chip" data-view="driver" aria-pressed="false">Driver side</button>
+        <button class="chip" data-view="rear" aria-pressed="false">Rear</button>
+        <button class="chip" data-view="top" aria-pressed="false">Roof</button>
+        <button class="chip" data-view="cabin" aria-pressed="false">Inside cabin</button>
+      </div>
+      <div class="toggles">
+        <label class="toggle"><input type="checkbox" id="spin" checked><span>Turntable</span></label>
+        <label class="toggle"><input type="checkbox" id="cabinlights" checked><span>Cabin lights</span></label>
+        <label class="toggle"><input type="checkbox" id="headlights"><span>Headlights</span></label>
+      </div>
+    </div>
+    <dl class="spec" aria-label="Specifications">
+      <dt>Length</dt><dd>11.00 m</dd>
+      <dt>Width</dt><dd>2.60 m</dd>
+      <dt>Height</dt><dd>3.45 m</dd>
+      <dt>Wheelbase</dt><dd>5.80 m</dd>
+      <dt>Seats</dt><dd>2 + 1 sofa</dd>
+      <dt>Triangles</dt><dd id="tris">—</dd>
+    </dl>
+  </div>
+</div>
+
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+} }
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+
+const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const canvas = document.getElementById('stage');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.toneMapping = THREE.AgXToneMapping;
+renderer.toneMappingExposure = 1.15;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+const scene = new THREE.Scene();
+const DUSK = new THREE.Color(0x12161b);
+scene.background = DUSK;
+scene.fog = new THREE.Fog(DUSK, 30, 70);
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+scene.environmentIntensity = 0.55;
+
+const camera = new THREE.PerspectiveCamera(38, 1, 0.05, 200);
+camera.position.set(11, 4.5, 13);
+const controls = new OrbitControls(camera, canvas);
+controls.enableDamping = true;
+controls.target.set(0, 1.6, 0);
+controls.maxPolarAngle = Math.PI * 0.495;
+controls.minDistance = 3;
+controls.maxDistance = 40;
+controls.autoRotate = !reduceMotion;
+controls.autoRotateSpeed = 0.6;
+
+// Lighting: warm low sun + cool sky fill.
+scene.add(new THREE.HemisphereLight(0xbfd2ff, 0x2a2420, 0.9));
+const sun = new THREE.DirectionalLight(0xffe2bf, 2.6);
+sun.position.set(9, 14, 7);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+Object.assign(sun.shadow.camera, { left: -9, right: 9, top: 9, bottom: -9, near: 1, far: 40 });
+sun.shadow.bias = -0.0004;
+sun.shadow.normalBias = 0.02;
+scene.add(sun);
+
+// Bus park bay: asphalt pad with yellow bay lines and a kerb stop.
+const ground = new THREE.Mesh(new THREE.CircleGeometry(40, 64),
+  new THREE.MeshStandardMaterial({ color: 0x1d2228, roughness: 0.92 }));
+ground.rotation.x = -Math.PI / 2;
+ground.receiveShadow = true;
+scene.add(ground);
+const paint = new THREE.MeshStandardMaterial({ color: 0xf2b233, roughness: 0.7 });
+for (const x of [-2.1, 2.1]) {
+  const line = new THREE.Mesh(new THREE.PlaneGeometry(0.12, 15), paint);
+  line.rotation.x = -Math.PI / 2; line.position.set(x, 0.003, -0.5);
+  scene.add(line);
+}
+const stop = new THREE.Mesh(new THREE.PlaneGeometry(4.32, 0.12), paint);
+stop.rotation.x = -Math.PI / 2; stop.position.set(0, 0.003, -8);
+scene.add(stop);
+
+// Cabin and headlight lamps (not part of the exported model).
+const cabinLights = new THREE.Group();
+for (const z of [-3.6, -1.2, 1.2, 3.4]) {
+  const p = new THREE.PointLight(0xffe7cc, 1.6, 4.5, 1.6);
+  p.position.set(0.2, 3.1, z);
+  cabinLights.add(p);
+}
+scene.add(cabinLights);
+const headlights = new THREE.Group();
+for (const x of [-1.08, 1.08]) {
+  const s = new THREE.SpotLight(0xfff4e0, 60, 25, 0.45, 0.6, 1.5);
+  s.position.set(x, 0.95, 5.6);
+  s.target.position.set(x * 1.4, 0, 14);
+  headlights.add(s, s.target);
+}
+headlights.visible = false;
+scene.add(headlights);
+
+// Views in glTF space: front of the bus is +Z, door side +X, up +Y.
+const views = {
+  hero:   { pos: [11, 4.5, 13],   target: [0, 1.6, 0],    min: 3,    max: 40 },
+  front:  { pos: [0, 2.2, 13.5],  target: [0, 1.8, 0],    min: 3,    max: 40 },
+  door:   { pos: [15, 2.4, 1],    target: [0, 1.7, 0],    min: 3,    max: 40 },
+  driver: { pos: [-15, 2.4, -1],  target: [0, 1.7, 0],    min: 3,    max: 40 },
+  rear:   { pos: [2, 2.6, -13.5], target: [0, 1.9, 0],    min: 3,    max: 40 },
+  top:    { pos: [0.01, 20, 0.5], target: [0, 1.5, 0],    min: 3,    max: 40 },
+  cabin:  { pos: [0.22, 2.4, -4.2], target: [0.22, 2.25, -3.7], min: 0.01, max: 2.5 },
+};
+let tween = null;
+function goTo(name) {
+  const v = views[name];
+  document.querySelectorAll('.chip').forEach(c => c.setAttribute('aria-pressed', String(c.dataset.view === name)));
+  controls.minDistance = Math.min(v.min, controls.minDistance);
+  controls.maxDistance = Math.max(v.max, controls.maxDistance);
+  controls.maxPolarAngle = name === 'cabin' ? Math.PI : Math.PI * 0.495;
+  const to = { pos: new THREE.Vector3(...v.pos), target: new THREE.Vector3(...v.target), min: v.min, max: v.max };
+  if (name === 'cabin') { spin.checked = false; controls.autoRotate = false; }
+  if (reduceMotion) { camera.position.copy(to.pos); controls.target.copy(to.target); finish(to); return; }
+  tween = { t: 0, from: { pos: camera.position.clone(), target: controls.target.clone() }, to };
+}
+function finish(to) { controls.minDistance = to.min; controls.maxDistance = to.max; }
+document.querySelectorAll('.chip').forEach(c => c.addEventListener('click', () => goTo(c.dataset.view)));
+
+const spin = document.getElementById('spin');
+spin.checked = !reduceMotion;
+spin.addEventListener('change', () => { controls.autoRotate = spin.checked; });
+document.getElementById('cabinlights').addEventListener('change', e => { cabinLights.visible = e.target.checked; });
+document.getElementById('headlights').addEventListener('change', e => { headlights.visible = e.target.checked; });
+
+// Load the bus.
+const bar = document.getElementById('bar');
+const loaderText = document.getElementById('loader-text');
+// The model ships as base64 text (agni_bus.glb.b64.txt) so any static host
+// serves it; decode it back to the binary GLB and parse it.
+const fileLoader = new THREE.FileLoader();
+fileLoader.setResponseType('text');
+fileLoader.load('agni_bus.glb.b64.txt', b64 => {
+  const bin = Uint8Array.from(atob(b64.trim()), c => c.charCodeAt(0));
+  new GLTFLoader().parse(bin.buffer, '', onModel, onError);
+}, e => {
+  if (e.total) bar.style.width = (100 * e.loaded / e.total).toFixed(0) + '%';
+}, onError);
+
+function onModel(gltf) {
+  const bus = gltf.scene;
+  let tris = 0;
+  bus.traverse(o => {
+    if (!o.isMesh) return;
+    o.castShadow = true;
+    o.receiveShadow = true;
+    const g = o.geometry;
+    tris += (g.index ? g.index.count : g.attributes.position.count) / 3;
+    const m = o.material;
+    if (m && m.transmission > 0) { m.thickness = 0.01; m.envMapIntensity = 1.2; o.castShadow = false; }
+  });
+  document.getElementById('tris').textContent = Math.round(tris / 1000) + 'k';
+  scene.add(bus);
+  document.getElementById('loader').hidden = true;
+}
+
+function onError(err) {
+  console.error(err);
+  loaderText.parentElement.innerHTML =
+    '<div class="error">The bus model did not load. Serve this folder over HTTP (for example <code>python3 -m http.server</code>) rather than opening the file directly, and check your connection to cdn.jsdelivr.net.</div>';
+}
+
+function resize() {
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h;
+  camera.fov = w < h ? 55 : 38;
+  camera.updateProjectionMatrix();
+}
+addEventListener('resize', resize);
+resize();
+
+const clock = new THREE.Clock();
+const ease = t => 1 - Math.pow(1 - t, 3);
+renderer.setAnimationLoop(() => {
+  const dt = clock.getDelta();
+  if (tween) {
+    tween.t = Math.min(1, tween.t + dt / 1.1);
+    const k = ease(tween.t);
+    camera.position.lerpVectors(tween.from.pos, tween.to.pos, k);
+    controls.target.lerpVectors(tween.from.target, tween.to.target, k);
+    if (tween.t === 1) { finish(tween.to); tween = null; }
+  }
+  controls.update();
+  renderer.render(scene, camera);
+});
+</script>

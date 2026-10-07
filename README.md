@@ -59,6 +59,29 @@ bash setup.sh                                  # installs Blender 5.2 as a Pytho
 | `nepali_bus` | | Classic Tata-style Nepali long-route bus (starting model) |
 | `agni_bus` | ~139k | Agni Express "Super Agni A/C VIP Sofa" coach, from user photos |
 
+## Web viewer
+
+`web/` is a self-contained Three.js viewer for the Agni coach: orbit and
+zoom, preset views (front, door side, driver side, rear, roof, inside the
+cabin), turntable, cabin lights and headlights.
+
+```bash
+python3 -m http.server 8000 -d web
+# then open http://localhost:8000
+```
+
+It needs internet for three.js (cdn.jsdelivr.net) and fonts. Opening
+`index.html` directly from disk won't work; browsers block file loads there.
+The model ships as `agni_bus.glb.b64.txt` (the web-optimized GLB: WebP
+textures, quantized geometry, base64 so any static host serves it).
+Regenerate it after rebuilding the bus:
+
+```bash
+npx @gltf-transform/cli optimize output/agni_bus/agni_bus.glb /tmp/agni_web.glb \
+  --compress quantize --texture-compress webp --texture-size 2048 --simplify false
+base64 -w0 /tmp/agni_web.glb > web/agni_bus.glb.b64.txt
+```
+
 ## Text and lettering
 
 `geo.text()` shapes text with HarfBuzz and builds the real glyph outlines as
