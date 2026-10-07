@@ -1,29 +1,109 @@
+<!doctype html>
 <meta charset="utf-8">
-<title>Main</title>
+<title>Agni Express Showroom</title>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Oswald:wght@500&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;700&family=Mukta:wght@400;600;800&display=swap">
 <style>
-  :root { color-scheme: dark; }
+  /* Layout: full-bleed studio canvas. Nameplate top-left, view presets top-right,
+     spec strip bottom-left, turntable/lamp/reset controls bottom-right.
+     A deliberately dark showroom look in every theme. */
+  :root {
+    --studio: #0d0f13;       /* showroom walls */
+    --panel: rgba(16, 19, 24, 0.78);
+    --line: rgba(232, 228, 220, 0.14);
+    --fg: #ece8e0;
+    --muted: #949ca6;
+    --agni: #e0322f;         /* Agni livery red */
+    --brass: #e6b54a;        /* trim / highlight */
+    --display: "Oswald", "Arial Narrow", "Roboto Condensed", sans-serif;
+    --body: "Mukta", "Noto Sans Devanagari", system-ui, sans-serif;
+    color-scheme: dark;
+  }
   [hidden] { display: none !important; }
   html, body { height: 100%; }
-  body { margin: 0; background: #0d0f13; overflow: hidden; }
+  body { margin: 0; background: var(--studio); color: var(--fg); font: 15px/1.45 var(--body); overflow: hidden; }
   #stage { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; outline: none; cursor: grab; }
   #stage:active { cursor: grabbing; }
-  .showroom-btn { position: fixed; left: 28px; bottom: calc(env(safe-area-inset-bottom, 0px) + 28px);
-    font: 500 14px/1 "Oswald", "Arial Narrow", sans-serif; letter-spacing: .32em; text-transform: uppercase; color: #f1e6cf;
-    padding: 14px 30px 14px 34px; border-radius: 999px; cursor: pointer;
-    background: linear-gradient(180deg, rgba(43, 46, 52, 0.85), rgba(13, 15, 19, 0.9));
-    border: 1px solid rgba(255, 214, 150, 0.55);
-    box-shadow: 0 0 18px rgba(255, 200, 120, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.12);
-    backdrop-filter: blur(6px); transition: box-shadow .25s, border-color .25s, color .25s; }
-  .showroom-btn:hover { color: #fff; border-color: rgba(255, 220, 160, 0.95); box-shadow: 0 0 28px rgba(255, 200, 120, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.18); }
-  .showroom-btn:focus-visible { outline: 2px solid #f1c27a; outline-offset: 3px; }
+  .ui { position: fixed; inset: 0; pointer-events: none; display: grid; grid-template-rows: auto 1fr auto; gap: 12px;
+    padding: calc(env(safe-area-inset-top, 0px) + 16px) 16px calc(env(safe-area-inset-bottom, 0px) + 16px); }
+  .row { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+  .row.bottom { align-items: flex-end; }
+  .row > * { pointer-events: auto; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; backdrop-filter: blur(8px); }
+  .plate { padding: 12px 16px 13px; max-width: min(400px, 100%); min-width: 0; }
+  .eyebrow { font: 600 11px/1 var(--body); letter-spacing: .16em; text-transform: uppercase; color: var(--brass); }
+  h1 { margin: 6px 0 2px; font: 700 34px/1 var(--display); letter-spacing: .03em; text-wrap: balance; }
+  h1 span { color: var(--agni); }
+  .route { font: 600 15px/1.3 var(--body); }
+  .route .to { color: var(--muted); font-family: var(--display); padding-inline: 5px; }
+  .views { display: flex; gap: 4px; padding: 4px; flex-wrap: wrap; }
+  button { font: 500 13px/1 var(--display); letter-spacing: .08em; text-transform: uppercase; color: var(--fg);
+    background: transparent; border: 1px solid transparent; border-radius: 4px; padding: 9px 11px; cursor: pointer; }
+  button:hover { border-color: var(--line); }
+  button[aria-pressed="true"] { background: var(--brass); color: var(--studio); }
+  button:focus-visible { outline: 2px solid var(--brass); outline-offset: 2px; }
+  .specs { display: grid; grid-template-columns: repeat(4, auto); gap: 4px 22px; padding: 11px 16px 12px; min-width: 0; }
+  .specs dt { font: 500 11px/1 var(--display); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+  .specs dd { margin: 4px 0 0; font: 500 22px/1 var(--display); font-variant-numeric: tabular-nums; }
+  .specs dd small { font-size: 13px; color: var(--muted); margin-left: 2px; }
+  .specs div { min-width: 0; }
+  .controls { display: flex; gap: 4px; padding: 4px; flex-wrap: wrap; }
+  .hint { position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom, 0px) + 112px); transform: translateX(-50%);
+    font: 500 12px/1 var(--display); letter-spacing: .14em; text-transform: uppercase; color: var(--muted);
+    pointer-events: none; transition: opacity .6s; white-space: nowrap; }
+  .hint.gone { opacity: 0; }
+  .loader { position: fixed; inset: 0; display: grid; place-items: center; pointer-events: none; }
+  .loader-box { width: min(300px, calc(100% - 32px)); display: grid; gap: 9px; text-align: center; }
+  .loader-box p { margin: 0; font: 500 13px/1 var(--display); letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
+  .bar { height: 3px; border-radius: 2px; background: var(--line); overflow: hidden; }
+  .bar i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--agni), var(--brass)); transition: width .2s; }
+  .error { background: var(--panel); border: 1px solid var(--agni); border-radius: 6px; padding: 12px 14px; font-size: 14px; color: var(--fg); }
+  @media (max-width: 640px) {
+    h1 { font-size: 26px; }
+    .specs { grid-template-columns: repeat(2, auto); }
+    .specs dd { font-size: 18px; }
+    .hint { bottom: calc(env(safe-area-inset-bottom, 0px) + 190px); }
+  }
+  @media (prefers-reduced-motion: reduce) { .hint { transition: none; } }
 </style>
 
-<canvas id="stage" aria-label="Agni Express bus. Drag to rotate."></canvas>
-<button class="showroom-btn" id="showroom-btn" type="button">Showroom</button>
+<canvas id="stage" tabindex="0" aria-label="Agni Express bus on a showroom turntable. Drag to rotate, scroll to zoom."></canvas>
+<div class="loader" id="loader">
+  <div class="loader-box"><p id="loader-text">Rolling the bus onto the turntable…</p><div class="bar"><i id="bar"></i></div></div>
+</div>
+<div class="ui">
+  <div class="row">
+    <div class="plate panel">
+      <div class="eyebrow">Showroom · Super Agni A/C VIP Sofa</div>
+      <h1>AGNI <span>EXPRESS</span></h1>
+      <div class="route">काठमाण्डौ<span class="to">→</span>काँकडभिट्टा</div>
+    </div>
+    <div class="views panel" role="group" aria-label="Camera views">
+      <button data-view="front" aria-pressed="true">Front ¾</button>
+      <button data-view="side" aria-pressed="false">Side</button>
+      <button data-view="rear" aria-pressed="false">Rear ¾</button>
+      <button data-view="top" aria-pressed="false">Top</button>
+      <button data-view="low" aria-pressed="false">Low</button>
+    </div>
+  </div>
+  <div></div>
+  <div class="row bottom">
+    <dl class="specs panel">
+      <div><dt>Length</dt><dd>11.0<small>m</small></dd></div>
+      <div><dt>Width</dt><dd>2.60<small>m</small></dd></div>
+      <div><dt>Height</dt><dd>3.45<small>m</small></dd></div>
+      <div><dt>Wheelbase</dt><dd>5.80<small>m</small></dd></div>
+    </dl>
+    <div class="controls panel" role="group" aria-label="Showroom controls">
+      <button id="b-spin" aria-pressed="true" title="Spin the turntable (Space)">Turntable</button>
+      <button id="b-lamps" aria-pressed="false" title="Headlamps and tail lamps (L)">Lamps</button>
+      <button id="b-reset" title="Back to the starting view (R)">Reset</button>
+    </div>
+  </div>
+</div>
+<div class="hint" id="hint">Drag to rotate · Scroll or pinch to zoom</div>
 
 <script type="importmap">
 { "imports": {
@@ -43,8 +123,8 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 
+const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const canvas = document.getElementById('stage');
-document.getElementById('showroom-btn').addEventListener('click', () => { location.href = 'showroom.html'; });
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.toneMapping = THREE.AgXToneMapping;
@@ -168,15 +248,103 @@ controls.dampingFactor = 0.06;
 controls.enablePan = false;
 controls.minDistance = 6.5;
 controls.maxDistance = 40;
-controls.enableZoom = false;
-camera.position.set(10.5, 3.6, 13.5);
 controls.minPolarAngle = 0.12;
 controls.maxPolarAngle = Math.PI / 2 - 0.03;          // never under the floor
 controls.target.set(0, 1.7, 0);
 
+const VIEWS = {
+  front: { pos: [10.5, 3.6, 13.5] },
+  side:  { pos: [17.5, 2.4, 0.01] },
+  rear:  { pos: [-10, 3.8, -13.5] },
+  top:   { pos: [6, 22, 8] },
+  low:   { pos: [6.5, 0.45, 9.5], target: [0, 1.9, 1] },
+};
+let fly = null;
+function setView(name, instant = false) {
+  const v = VIEWS[name];
+  const tgt = new THREE.Vector3(...(v.target || [0, 1.7, 0]));
+  // step back on tall, narrow screens so the 11 m bus fits across
+  const fit = Math.max(1, 0.75 / Math.max(0.3, camera.aspect));
+  const to = new THREE.Vector3(...v.pos).sub(tgt).multiplyScalar(fit).add(tgt);
+  document.querySelectorAll('[data-view]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.view === name)));
+  if (instant || reduceMotion) { camera.position.copy(to); controls.target.copy(tgt); fly = null; return; }
+  fly = { start: performance.now(), p0: camera.position.clone(), t0: controls.target.clone(), p1: to, t1: tgt };
+}
+document.querySelectorAll('[data-view]').forEach(b => b.addEventListener('click', () => { setView(b.dataset.view); canvas.focus(); }));
+
+// The turntable pauses while you drag and picks up again a moment later.
+let spinning = !reduceMotion, dragging = false, resumeAt = 0;
+const spinBtn = document.getElementById('b-spin');
+spinBtn.setAttribute('aria-pressed', String(spinning));
+function setSpin(on) { spinning = on; spinBtn.setAttribute('aria-pressed', String(on)); }
+spinBtn.addEventListener('click', () => setSpin(!spinning));
+controls.addEventListener('start', () => {
+  dragging = true; fly = null;
+  document.querySelectorAll('[data-view]').forEach(b => b.setAttribute('aria-pressed', 'false'));
+  document.getElementById('hint').classList.add('gone');
+});
+controls.addEventListener('end', () => { dragging = false; resumeAt = performance.now() + 2500; });
+document.getElementById('b-reset').addEventListener('click', () => { turntableAngle = 0; setView('front'); });
+addEventListener('keydown', e => {
+  if (e.key === ' ') { e.preventDefault(); setSpin(!spinning); }
+  if (e.key === 'l' || e.key === 'L') lampBtn.click();
+  if (e.key === 'r' || e.key === 'R') document.getElementById('b-reset').click();
+});
+
+// ---------------------------------------------------------------- lamps
+const GLOW = (() => {
+  const c = document.createElement('canvas'); c.width = c.height = 128;
+  const g = c.getContext('2d'), gr = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+  gr.addColorStop(0, 'rgba(255,255,255,1)'); gr.addColorStop(0.14, 'rgba(255,255,255,0.8)');
+  gr.addColorStop(0.4, 'rgba(255,255,255,0.18)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = gr; g.fillRect(0, 0, 128, 128);
+  return new THREE.CanvasTexture(c);
+})();
 const bus = new THREE.Group();
 bus.position.y = TT_H;
 turntable.add(bus);
+const lamps = [];
+function lamp(x, y, z, nz, color, size, k) {
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: GLOW, color: new THREE.Color(color).multiplyScalar(k),
+    blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false, transparent: true }));
+  sp.position.set(x, y, z); sp.scale.setScalar(size); sp.visible = false;
+  bus.add(sp);
+  lamps.push({ sp, nz, size });
+}
+for (const sx of [-1, 1]) {
+  lamp(sx * 1.08, 0.93, 5.52, 1, 0xfff4e6, 0.55, 3);
+  lamp(sx * 0.55, 0.61, 5.53, 1, 0xffe9c6, 0.4, 2);
+  lamp(sx * 1.08, 1.3, -5.55, -1, 0xff1a0a, 0.6, 2.5);
+}
+const beams = [];
+for (const x of [-1.08, 1.08]) {
+  const l = new THREE.SpotLight(0xfff1dc, 0, 30, 0.42, 0.6, 1.5);
+  l.position.set(x, 0.95, 5.6); l.target.position.set(x * 1.4, 0, 20);
+  bus.add(l, l.target); beams.push(l);
+}
+const lampBtn = document.getElementById('b-lamps');
+let lampsOn = false;
+lampBtn.addEventListener('click', () => {
+  lampsOn = !lampsOn;
+  lampBtn.setAttribute('aria-pressed', String(lampsOn));
+  lamps.forEach(l => { l.sp.visible = lampsOn; });
+  beams.forEach(l => { l.intensity = lampsOn ? 160 : 0; });
+  // dim the house lights a touch so the lamps read
+  key.intensity = lampsOn ? 190 : 300;
+  scene.environmentIntensity = lampsOn ? 0.32 : 0.45;
+});
+const camW = new THREE.Vector3(), lampW = new THREE.Vector3(), nW = new THREE.Vector3();
+function fadeLamps() {
+  if (!lampsOn) return;
+  camera.getWorldPosition(camW);
+  for (const l of lamps) {
+    l.sp.getWorldPosition(lampW);
+    nW.set(0, 0, l.nz).transformDirection(bus.matrixWorld);
+    const f = THREE.MathUtils.clamp(nW.dot(camW.clone().sub(lampW).normalize()) * 1.8, 0, 1);
+    l.sp.material.opacity = f;
+    l.sp.scale.setScalar(l.size * (0.5 + 0.5 * f));
+  }
+}
 
 // ---------------------------------------------------------------- post
 // HDR -> clean NaN/overflow -> gentle bloom (ring, strips, lamps) -> AgX -> vignette.
@@ -218,6 +386,7 @@ function lacquerPaint(m) {
   return pm;
 }
 
+const bar = document.getElementById('bar');
 const fileLoader = new THREE.FileLoader();
 fileLoader.setResponseType('text');
 fileLoader.load('agni_bus.glb.b64.txt', b64 => {
@@ -241,9 +410,15 @@ fileLoader.load('agni_bus.glb.b64.txt', b64 => {
       o.material = done.get(m);
     });
     bus.add(gltf.scene);
+    document.getElementById('loader').hidden = true;
+    canvas.focus();
   }, fail);
-}, undefined, fail);
-function fail(err) { console.error(err); }
+}, e => { if (e.total) bar.style.width = (100 * e.loaded / e.total).toFixed(0) + '%'; }, fail);
+function fail(err) {
+  console.error(err);
+  document.getElementById('loader-text').parentElement.innerHTML =
+    '<div class="error">The bus model did not load. Serve this folder over HTTP (for example <code>python3 -m http.server</code>) and check your connection to cdn.jsdelivr.net.</div>';
+}
 
 // ---------------------------------------------------------------- loop
 function resize() {
@@ -259,9 +434,24 @@ function resize() {
 }
 addEventListener('resize', resize);
 resize();
+setView('front', true);
 
+let turntableAngle = 0;
+const clock = new THREE.Clock();
+const ease = t => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
 renderer.setAnimationLoop(() => {
+  const dt = Math.min(clock.getDelta(), 0.05);
+  if (spinning && !dragging && performance.now() > resumeAt) turntableAngle += dt * 0.16;
+  turntable.rotation.y = turntableAngle;
+  if (fly) {
+    const t = Math.min(1, (performance.now() - fly.start) / 1300), k = ease(t);
+    camera.position.lerpVectors(fly.p0, fly.p1, k);
+    controls.target.lerpVectors(fly.t0, fly.t1, k);
+    if (t >= 1) fly = null;
+  }
   controls.update();
-  composer.render();
+  fadeLamps();
+  composer.render(dt);
 });
+window.showroom = { camera, controls, setView, setSpin };
 </script>
