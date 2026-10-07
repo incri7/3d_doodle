@@ -52,6 +52,10 @@
   .specs dd small { font-size: 13px; color: var(--muted); margin-left: 2px; }
   .specs div { min-width: 0; }
   .controls { display: flex; gap: 4px; padding: 4px; flex-wrap: wrap; }
+  .skins { position: relative; }
+  .skins-menu { position: absolute; right: 0; bottom: calc(100% + 8px); min-width: 170px; padding: 4px; display: grid; gap: 2px; }
+  .skins-menu button { text-align: left; }
+  .skins-menu button[aria-checked="true"] { color: var(--brass); }
   .hint { position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom, 0px) + 112px); transform: translateX(-50%);
     font: 500 12px/1 var(--display); letter-spacing: .14em; text-transform: uppercase; color: var(--muted);
     pointer-events: none; transition: opacity .6s; white-space: nowrap; }
@@ -105,6 +109,12 @@
       <button id="b-spin" aria-pressed="true" title="Spin the turntable (Space)">Turntable</button>
       <button id="b-lamps" aria-pressed="false" title="Headlamps and tail lamps (L)">Lamps</button>
       <button id="b-reset" title="Back to the starting view (R)">Reset</button>
+      <div class="skins">
+        <button id="b-skins" aria-haspopup="menu" aria-expanded="false" aria-controls="skins-menu">Skins ▾</button>
+        <div class="skins-menu panel" id="skins-menu" role="menu" hidden>
+          <button role="menuitemradio" aria-checked="true">Agni Express</button>
+        </div>
+      </div>
     </div>
   </div>
 </div>
@@ -283,6 +293,15 @@ const spinBtn = document.getElementById('b-spin');
 spinBtn.setAttribute('aria-pressed', String(spinning));
 function setSpin(on) { spinning = on; spinBtn.setAttribute('aria-pressed', String(on)); }
 spinBtn.addEventListener('click', () => setSpin(!spinning));
+const skinsBtn = document.getElementById('b-skins'), skinsMenu = document.getElementById('skins-menu');
+skinsBtn.addEventListener('click', e => {
+  e.stopPropagation();
+  skinsMenu.hidden = !skinsMenu.hidden;
+  skinsBtn.setAttribute('aria-expanded', String(!skinsMenu.hidden));
+});
+addEventListener('click', e => {
+  if (!skinsMenu.hidden && !skinsMenu.contains(e.target)) { skinsMenu.hidden = true; skinsBtn.setAttribute('aria-expanded', 'false'); }
+});
 document.getElementById('b-back').addEventListener('click', () => { location.href = 'index.html'; });
 controls.addEventListener('start', () => {
   dragging = true; fly = null;
