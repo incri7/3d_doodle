@@ -1305,8 +1305,9 @@ function layoutMirrors(W, H) {
   const rw = Math.min(380, W * 0.42), rh = rw * 0.3;
   place(mirrors.rear, W / 2, H - 22 - rh / 2 - 74, rw, rh);
   const sw = Math.min(140, W * 0.16), sh = sw * 1.45;
-  place(mirrors.left, W - 26 - sw / 2, H * 0.52, sw, sh);
-  place(mirrors.right, 26 + sw / 2, H * 0.52, sw, sh);
+  // +X (door side) is the driver's left, so its mirror sits on the left of the screen
+  place(mirrors.left, 26 + sw / 2, H * 0.52, sw, sh);
+  place(mirrors.right, W - 26 - sw / 2, H * 0.52, sw, sh);
   overlayCam.right = W; overlayCam.top = H; overlayCam.updateProjectionMatrix();
 }
 function renderMirrors() {
