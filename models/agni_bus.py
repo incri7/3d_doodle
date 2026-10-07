@@ -30,9 +30,9 @@ AXLE_R = AXLE_F + 5.8
 TYRE_R, TYRE_W = 0.53, 0.30
 BAND_Z0, BAND_Z1 = 2.05, 3.10  # side glazing band
 EPS = 0.004                  # decal offset from the body
+R_FRONT, R_REAR = 0.45, 0.32  # plan-view corner radii (rounded coach corners)
 
 PI = math.pi
-ARCHES = []  # wheel-arch cutters, reused to trim side decals
 
 
 def front_y(z):
@@ -41,7 +41,7 @@ def front_y(z):
 
 
 def build():
-    ARCHES.clear()
+    BODY.clear()
     mats = {
         "paint": M.painted_metal("MAT-white_paint", paint=(0.92, 0.92, 0.9), wear=0.08, grime=0.3,
                                  paint_roughness=0.16, metal_color=(0.7, 0.7, 0.72)),
@@ -74,52 +74,100 @@ def build():
 
 
 # --- placement helpers ---------------------------------------------------------
-# Every decal is drawn in a local 2D (u, v) plane and placed on a body face.
+# Every decal is drawn flat in world units, densified where the body curves,
+# then projected onto the body (Shrinkwrap) and given thickness. So glass,
+# graphics and lettering follow the rounded corners like a real wrap.
+
+BODY = []  # [body object], set by _body()
+
+
+def _steps(lo, hi, step=0.03):
+    n = max(1, int((hi - lo) / step))
+    return [lo + (hi - lo) * i / n for i in range(n + 1)]
+
+
+def _project(o, axis, positive, depth, lift, xs=(), ys=(), zs=()):
+    geo.apply_transform(o)
+    for ax, pos in (("X", xs), ("Y", ys), ("Z", zs)):
+        if pos:
+            geo.densify(o, ax, pos)
+    return geo.project_onto(o, BODY[0], axis, positive, offset=EPS + lift, thickness=depth)
+
+
+def _front_cuts():
+    hw = W / 2
+    xs = _steps(hw - R_FRONT - 0.05, hw) + [-x for x in _steps(hw - R_FRONT - 0.05, hw)]
+    zs = _steps(WS_Z0 - 0.06, WS_Z0 + 0.06, 0.02) + _steps(Z1 - 0.45, Z1) + _steps(Z0, Z0 + 0.2)
+    return xs, zs
+
+
+def _rear_cuts():
+    hw = W / 2
+    xs = _steps(hw - R_REAR - 0.05, hw) + [-x for x in _steps(hw - R_REAR - 0.05, hw)]
+    zs = _steps(Z1 - 0.45, Z1) + _steps(Z0, Z0 + 0.2)
+    return xs, zs
+
+
+def _side_cuts():
+    ys = _steps(YF, YF + R_FRONT + 0.4) + _steps(YB - R_REAR - 0.05, YB)
+    zs = _steps(Z1 - 0.5, Z1) + _steps(Z0, Z0 + 0.2)
+    return ys, zs
+
 
 def on_side(name, contours, side, mat, depth=0.004, lift=0.0):
     """Shape on the +X (side=1) or -X (side=-1) flank. Contours are in world
     (y, z), so the same numbers mean the same spot on the bus."""
+    if min(z for c in contours for _, z in c) < TYRE_R + 0.75:
+        # Graphics never span the wheel openings: trim them out in 2D.
+        holes = [[(ay + (TYRE_R + 0.14) * math.cos(a), TYRE_R + 0.02 + (TYRE_R + 0.14) * math.sin(a))
+                  for a in [2 * PI * i / 48 for i in range(48)]] for ay in (AXLE_F, AXLE_R)]
+        contours = geo.clip_contours(contours, holes)
+        if not contours:
+            return None
     local = [[(side * y, z) for y, z in c] for c in contours]
-    o = geo.flat_shape(name, local, depth, (side * (W / 2 + EPS + lift), 0, 0),
-                       (PI / 2, 0, side * PI / 2))
-    if min(z for c in contours for _, z in c) < TYRE_R + 0.7:
-        for arch in ARCHES:  # graphics never span the wheel openings
-            geo.cut(o, arch)
+    o = geo.flat_shape(name, local, 0, (side * (W / 2 + 0.5), 0, 0), (PI / 2, 0, side * PI / 2))
+    ys, zs = _side_cuts()
+    _project(o, "X", side < 0, depth, lift, ys=ys, zs=zs)
     return M.assign(o, mat)
 
 
 def side_text(name, body, side, y, z, size, mat, font="condensed", depth=0.004, lift=0.0, **kw):
-    o = geo.text(name, body, size, depth, (side * (W / 2 + EPS + lift), y, z),
+    o = geo.text(name, body, size, 0, (side * (W / 2 + 0.5), y, z),
                  (PI / 2, 0, side * PI / 2), font=font, **kw)
+    ys, zs = _side_cuts()
+    _project(o, "X", side < 0, depth, lift, ys=ys, zs=zs)
     return M.assign(o, mat)
 
 
-def on_front(name, contours, mat, depth=0.006, lift=0.0, z_hint=1.0):
-    """Shape on the front face; contours in world (x, z). Above WS_Z0 the
-    face is raked, so the shape is tilted to match."""
-    tilt = math.atan(RAKE) if z_hint > WS_Z0 else 0.0
-    y = front_y(z_hint) - EPS - lift
-    local = [[(x, z - z_hint) for x, z in c] for c in contours]
-    o = geo.flat_shape(name, local, depth, (0, y, z_hint), (PI / 2 - tilt, 0, 0))
+def on_front(name, contours, mat, depth=0.006, lift=0.0, z_hint=None):
+    """Shape on the front (vertical below WS_Z0, raked above, rounded corners);
+    contours in world (x, z)."""
+    o = geo.flat_shape(name, contours, 0, (0, YF - 0.6, 0), (PI / 2, 0, 0))
+    xs, zs = _front_cuts()
+    _project(o, "Y", True, depth, lift, xs=xs, zs=zs)
     return M.assign(o, mat)
 
 
 def front_text(name, body, x, z, size, mat, font="devanagari", depth=0.006, lift=0.0, **kw):
-    tilt = math.atan(RAKE) if z > WS_Z0 else 0.0
-    o = geo.text(name, body, size, depth, (x, front_y(z) - EPS - lift, z),
-                 (PI / 2 - tilt, 0, 0), font=font, **kw)
+    o = geo.text(name, body, size, 0, (x, YF - 0.6, z), (PI / 2, 0, 0), font=font, **kw)
+    xs, zs = _front_cuts()
+    _project(o, "Y", True, depth, lift, xs=xs, zs=zs)
     return M.assign(o, mat)
 
 
 def on_rear(name, contours, mat, depth=0.006, lift=0.0):
     """Shape on the back face; contours in world (x, z)."""
     local = [[(-x, z) for x, z in c] for c in contours]
-    o = geo.flat_shape(name, local, depth, (0, YB + EPS + lift, 0), (PI / 2, 0, PI))
+    o = geo.flat_shape(name, local, 0, (0, YB + 0.6, 0), (PI / 2, 0, PI))
+    xs, zs = _rear_cuts()
+    _project(o, "Y", False, depth, lift, xs=xs, zs=zs)
     return M.assign(o, mat)
 
 
 def rear_text(name, body, x, z, size, mat, font="devanagari", depth=0.006, lift=0.0, **kw):
-    o = geo.text(name, body, size, depth, (x, YB + EPS + lift, z), (PI / 2, 0, PI), font=font, **kw)
+    o = geo.text(name, body, size, 0, (x, YB + 0.6, z), (PI / 2, 0, PI), font=font, **kw)
+    xs, zs = _rear_cuts()
+    _project(o, "Y", False, depth, lift, xs=xs, zs=zs)
     return M.assign(o, mat)
 
 
@@ -169,30 +217,47 @@ def _body(m):
     bmesh.ops.connect_verts(bm, verts=knee)
     bm.to_mesh(body.data)
     bm.free()
+    # Big plan-view radii on the vertical corners (bevel weights select them),
+    # then the general edge rounding.
+    me = body.data
+    weight = me.attributes.new("bevel_weight_edge", "FLOAT", "EDGE")
+    for e in me.edges:
+        a, b = (me.vertices[i].co for i in e.vertices)
+        if abs(abs(a.x) - hw) < 1e-6 and abs(abs(b.x) - hw) < 1e-6:
+            if abs(a.y - front_y(a.z)) < 1e-6 and abs(b.y - front_y(b.z)) < 1e-6:
+                weight.data[e.index].value = 1.0
+            elif abs(a.y - YB) < 1e-6 and abs(b.y - YB) < 1e-6:
+                weight.data[e.index].value = R_REAR / R_FRONT
+    corners = body.modifiers.new("BevelCorners", "BEVEL")
+    corners.limit_method = "WEIGHT"
+    corners.width = R_FRONT
+    corners.segments = 12
+    corners.harden_normals = False
     geo.bevel(body, width=0.13, segments=5, angle=50, harden=False).name = "BevelBig"
     for y in (AXLE_F, AXLE_R):
         arch = geo.cylinder("CUT-arch", TYRE_R + 0.1, W + 1, 40, (0, y, TYRE_R + 0.02))
         arch.rotation_euler = (0, PI / 2, 0)
         geo.cut(body, arch, material=m["black"])
-        ARCHES.append(arch)
     geo.finish_hard_surface(body, bevel_width=0.008, segments=2, angle=40)
     M.assign(body, m["paint"])
+    BODY.append(body)
     # Arch cut faces got MAT-black_trim (liner); body keeps white in slot 0.
 
 
 def _glazing(m):
     g, blk = m["glass"], m["black"]
     for side in (-1, 1):
-        y0 = YF + (1.15 if side > 0 else 0.25)  # +X: door ahead of the band
-        on_side("GEO-side_glass", [rect(y0, BAND_Z0, YB - 0.14, BAND_Z1)], side, g, depth=0.008)
-    # Door on +X: tall dark glazed door with a thin white frame gap.
-    on_side("GEO-door", [rounded_rect(YF + 0.28, 0.6, YF + 1.05, BAND_Z1, 0.05)], 1, g, depth=0.008)
-    # Windshield: one raked pane with a black frame border.
+        # +X: door ahead of the band; -X: the driver's window wraps from the corner.
+        y0 = YF + (1.3 if side > 0 else 0.62)
+        on_side("GEO-side_glass", [rect(y0, BAND_Z0, YB - 0.2, BAND_Z1)], side, g, depth=0.008)
+    # Door on +X: tall dark glazed door just behind the corner.
+    on_side("GEO-door", [rounded_rect(YF + 0.5, 0.6, YF + 1.22, BAND_Z1, 0.05)], 1, g, depth=0.008)
+    # Windshield: wraps around the rounded front corners, black frame border.
     zt = Z1 - 0.2
-    on_front("GEO-windshield_frame", [rounded_rect(-1.22, WS_Z0 + 0.02, 1.22, zt, 0.12)], blk,
-             depth=0.008, z_hint=(WS_Z0 + zt) / 2)
-    on_front("GEO-windshield", [rounded_rect(-1.15, WS_Z0 + 0.1, 1.15, zt - 0.06, 0.1)], g,
-             depth=0.008, lift=0.004, z_hint=(WS_Z0 + zt) / 2)
+    on_front("GEO-windshield_frame", [rounded_rect(-1.29, WS_Z0 + 0.02, 1.29, zt, 0.12)], blk,
+             depth=0.008)
+    on_front("GEO-windshield", [rounded_rect(-1.24, WS_Z0 + 0.1, 1.24, zt - 0.06, 0.1)], g,
+             depth=0.008, lift=0.004)
 
 
 # --- front ------------------------------------------------------------------------

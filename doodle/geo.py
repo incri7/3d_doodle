@@ -163,6 +163,92 @@ def tube(name, points, radius=0.02, location=(0, 0, 0), resolution=8, coll=None)
     return _link(obj, coll)
 
 
+def apply_transform(obj):
+    """Bake location/rotation/scale into the mesh (object becomes identity)."""
+    # matrix_basis is built from loc/rot/scale directly; matrix_world would be
+    # stale until the depsgraph updates.
+    obj.data.transform(obj.matrix_basis)
+    obj.location = (0, 0, 0)
+    obj.rotation_euler = (0, 0, 0)
+    obj.scale = (1, 1, 1)
+    return obj
+
+
+def densify(obj, axis, positions):
+    """Slice the mesh with planes perpendicular to `axis` ('X'/'Y'/'Z') at
+    world `positions`, adding vertices so it can bend over curved surfaces.
+    The object must have an identity transform (see apply_transform)."""
+    i = "XYZ".index(axis)
+    no = [0, 0, 0]
+    no[i] = 1
+    bm = bmesh.new()
+    bm.from_mesh(obj.data)
+    lo = min(v.co[i] for v in bm.verts)
+    hi = max(v.co[i] for v in bm.verts)
+    for p in positions:
+        if lo < p < hi:
+            co = [0, 0, 0]
+            co[i] = p
+            geom = bm.verts[:] + bm.edges[:] + bm.faces[:]
+            bmesh.ops.bisect_plane(bm, geom=geom, plane_co=co, plane_no=no)
+    bm.to_mesh(obj.data)
+    bm.free()
+    return obj
+
+
+def project_onto(obj, target, axis, positive, offset=0.004, thickness=0.004):
+    """Project a single-sided decal onto `target` along a world axis, float it
+    `offset` above the surface and give it `thickness` outward. Use for glass,
+    graphics and lettering on curved bodywork."""
+    sw = obj.modifiers.new("Project", "SHRINKWRAP")
+    sw.target = target
+    sw.wrap_method = "PROJECT"
+    sw.use_project_x, sw.use_project_y, sw.use_project_z = (axis == "X", axis == "Y", axis == "Z")
+    sw.use_negative_direction = not positive
+    sw.use_positive_direction = positive
+    sw.offset = offset
+    if thickness:
+        so = obj.modifiers.new("Thickness", "SOLIDIFY")
+        so.thickness = thickness
+        so.offset = 1.0
+    return obj
+
+
+def clip_contours(contours, cutters):
+    """2D boolean: `contours` minus `cutters` (both lists of closed
+    polylines). Robust where 3D booleans on thin decals fail."""
+    import pathops
+    from fontTools.pens.recordingPen import RecordingPen
+
+    def to_path(cs):
+        path = pathops.Path(fillType=pathops.FillType.EVEN_ODD)
+        pen = path.getPen()
+        for c in cs:
+            pen.moveTo(c[0])
+            for p in c[1:]:
+                pen.lineTo(p)
+            pen.closePath()
+        return path
+
+    result = pathops.op(to_path(contours), to_path(cutters), pathops.PathOp.DIFFERENCE,
+                        fix_winding=True)
+    rec = RecordingPen()
+    result.draw(rec)
+    out, cur = [], []
+    for cmd, pts in rec.value:
+        if cmd == "moveTo":
+            cur = [pts[0]]
+        elif cmd == "lineTo":
+            cur.append(pts[0])
+        elif cmd in ("qCurveTo", "curveTo"):
+            cur.extend(pts)
+        elif cmd in ("closePath", "endPath"):
+            if len(cur) > 2:
+                out.append(cur)
+            cur = []
+    return out
+
+
 def bezier(p0, p1, p2, p3, steps=16):
     """Points along a 2D cubic Bezier (excluding p0), for building outlines."""
     out = []
