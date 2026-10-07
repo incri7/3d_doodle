@@ -11,13 +11,13 @@ export const STEP = 1 / 120;          // physics sub-step (s)
 
 export const BUS = {
   mass: 12000,                          // kg, laden 11 m coach
-  com: [0, 1.15, -0.2],                 // centre of mass in bus space (m)
+  com: [0, 1.5, -0.2],                  // centre of mass (m): high-deck coach, laden; tips at ~0.6 g
   wheelRadius: 0.53,
   restLength: 0.32,                     // suspension
   stiffness: 28,                        // per kg of chassis: sag = g / (6 * k) = 5.8 cm (air suspension)
-  dampRelax: 3.0, dampComp: 4.2,
+  dampRelax: 2.2, dampComp: 3.2,        // soft air suspension: the body sways
   travel: 0.2,
-  rollInfluence: 0.75,                  // lower = less body roll (anti-roll bars)
+  rollInfluence: 1.0,                   // 1 = physical: tyre forces act at the road, full roll moment
   wheels: [                             // centres in bus space
     { name: 'wheel_fl',  x:  1.00, z:  3.15, front: true },
     { name: 'wheel_fr',  x: -1.00, z:  3.15, front: true },
@@ -30,14 +30,15 @@ export const BUS = {
   idle: 650, redline: 2500, peakTorque: 1150,   // Nm, 6-cylinder diesel
   gears: [6.2, 3.9, 2.55, 1.75, 1.28, 1.0], reverse: 5.8, final: 4.3, efficiency: 0.86,
   upshift: 2000, downshift: 1050, shiftTime: 0.45,
-  governor: 25,                         // m/s, 90 km/h speed limiter
-  brakeDecel: 6.5,                      // m/s^2 service brake
-  handbrakeDecel: 7.5,
+  governor: 30.5,                       // m/s, 110 km/h (Nepali buses rarely respect the 80 limit)
+  brakeDecel: 9.5,                      // m/s^2 brake demand, more than the tyres can give: no ABS, wheels slide
   engineBrake: 0.45,                    // m/s^2 when coasting in gear
   cdA: 0.62 * 7.6,                      // drag coefficient x frontal area (m^2)
   rollRes: 0.009,
-  maxSteer: 0.62, steerRate: 1.5, highSpeedSteer: 0.14,
-  grip: { road: 1.2, offroad: 0.78 },   // tyre friction (frictionSlip)
+  maxSteer: 0.5, returnRate: 2.5,       // road-wheel lock (rad); return speed in locks per second
+  fullInputG: 0.85,                     // full input at speed asks for about the tyres' limit
+  muPeak: 0.85, muLocked: 0.62,         // longitudinal tyre grip: rolling vs locked (sliding)
+  grip: { road: 1.3, offroad: 0.75 },   // tyre friction (frictionSlip), about 0.8 g on asphalt
   roadHalfWidth: 5,                     // the road runs along world Z at x = 0
 };
 
@@ -97,7 +98,7 @@ export class Bus {
   constructor(world, colliders) {
     const com = new CANNON.Vec3(...BUS.com);
     this.com = com;
-    const chassis = new CANNON.Body({ mass: BUS.mass, angularDamping: 0.12, linearDamping: 0.002 });
+    const chassis = new CANNON.Body({ mass: BUS.mass, angularDamping: 0.01, linearDamping: 0.001 });
     for (const c of colliders) {
       const off = new CANNON.Vec3(c.pos[0] - com.x, c.pos[1] - com.y, c.pos[2] - com.z);
       chassis.addShape(new CANNON.Box(new CANNON.Vec3(...c.half)), off, new CANNON.Quaternion(...c.quat));
@@ -139,6 +140,7 @@ export class Bus {
     this.speed = 0;           // forward speed (m/s), negative when reversing
     this.throttle = 0;
     this.braking = false;
+    this.locked = 0;          // wheels currently locked under braking
     this.impact = 0;          // last hard-impact speed, for sound/camera shake
     chassis.addEventListener('collide', e => {
       const v = Math.abs(e.contact.getImpactVelocityAlongNormal());
@@ -171,9 +173,15 @@ export class Bus {
     const speed = this.speed, aspeed = Math.abs(speed);
 
     // Steering: rate-limited, less lock at speed, Ackermann geometry.
-    const lock = Math.max(BUS.highSpeedSteer, BUS.maxSteer / (1 + aspeed * 0.085));
+    // Steering like hands on a wheel: it winds on gradually (a tap is a small
+    // correction) and springs back faster. Full input at speed asks for about
+    // the tyres' grip limit, which is above the rollover threshold: hold it
+    // through a fast corner and the bus goes over.
+    const lock = Math.min(BUS.maxSteer, Math.atan(BUS.wheelbase * BUS.fullInputG * G / Math.max(1, aspeed * aspeed)));
     const target = THREEish.clamp(input.steer, -1, 1) * lock;
-    const maxDelta = BUS.steerRate * dt;
+    const returning = Math.abs(target) < Math.abs(this.steer) || Math.sign(target) !== Math.sign(this.steer);
+    // about 0.8 s from centre to full input at any speed; springs back faster
+    const maxDelta = (returning ? Math.max(BUS.returnRate * lock, 0.25) : Math.max(lock / 0.8, 0.05)) * dt;
     this.steer += THREEish.clamp(target - this.steer, -maxDelta, maxDelta);
     const d = this.steer;
     let inner = d, outer = d;
@@ -226,17 +234,25 @@ export class Bus {
 
     // Brakes act as an impulse cap per sub-step; split evenly over all six wheels.
     const perWheel = BUS.mass / BUS.wheels.length;
-    let brakeImpulse = brake * perWheel * BUS.brakeDecel * STEP;
+    const brakeDemand = brake * perWheel * BUS.brakeDecel * STEP;
+    this.locked = 0;
     const coast = !drive && !brake;
     BUS.wheels.forEach((w, i) => {
       const info = v.wheelInfos[i];
-      let b = brakeImpulse;
+      // No ABS: each tyre can only brake up to its grip (load x mu). Ask for
+      // more and the wheel locks: it slides with less grip and, at the front,
+      // stops steering.
+      const cap = info.suspensionForce * STEP * BUS.muPeak;
+      const lockedWheel = brakeDemand > cap && info.isInContact && aspeed > 1;
+      const rearLocked = input.handbrake && !w.front && aspeed > 1;
+      let b = lockedWheel ? info.suspensionForce * STEP * BUS.muLocked : brakeDemand;
+      if (lockedWheel) this.locked++;
       if (coast) b = perWheel * (G * BUS.rollRes + (this.gear > 0 ? BUS.engineBrake : 0)) * STEP;
-      if (input.handbrake && !w.front) b = Math.max(b, perWheel * 1.5 * BUS.handbrakeDecel * STEP);
+      if (rearLocked) b = Math.max(b, info.suspensionForce * STEP * BUS.muLocked);
       // Grip: asphalt vs verge; the handbrake lets the rear step out a little.
       const p = info.raycastResult.hitPointWorld;
       const onRoad = info.isInContact && Math.abs(p.x) < BUS.roadHalfWidth;
-      info.frictionSlip = (onRoad ? BUS.grip.road : BUS.grip.offroad) * (input.handbrake && !w.front ? 0.6 : 1);
+      info.frictionSlip = (onRoad ? BUS.grip.road : BUS.grip.offroad) * (lockedWheel || rearLocked ? 0.35 : 1);
       if (!onRoad && info.isInContact && coast) b *= 2.5;
       // cannon-es pushes along -forward for positive force in this axis setup
       v.applyEngineForce(w.drive ? -force / driven : 0, i);
@@ -252,6 +268,9 @@ export class Bus {
   }
 
   /** Per-wheel state for animating the model: spin angle, steer, centre drop. */
+  /** Wheels currently off the ground (2+ on one side = tipping). */
+  liftedWheels() { return this.vehicle.wheelInfos.filter(w => !w.isInContact).length; }
+
   wheelStates() {
     const sag = G / (BUS.wheels.length * BUS.stiffness);
     return this.vehicle.wheelInfos.map((w, i) => ({

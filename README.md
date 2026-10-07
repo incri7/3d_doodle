@@ -71,15 +71,23 @@ and drag to look around. Touch screens get on-screen pedals. The road wheels
 roll and the front pair steer, and the steering wheel turns with your input.
 
 Physics: real vehicle simulation with [cannon-es](https://github.com/pmndrs/cannon-es)
-(`web/bus-physics.js`, inlined into the page by `python3 web/sync_physics.py`).
-12 t chassis with a low centre of mass and the model's hitbox, six raycast
-wheels with air-suspension, Ackermann steering, load-sensitive tyre grip (less
-on grass), a diesel torque curve through a 6-speed automatic with reverse, air
-brakes, handbrake, aero drag and rolling resistance, 90 km/h governor. Trees,
-poles, speed bumps and knock-over props (cones, drums, crates) collide. R
-resets the bus, K shows the hitbox and suspension rays. Measured in headless
-tests: 0-50 km/h 8.9 s, 90-0 km/h in 47 m, 0.62 g cornering with 2.6 deg
-of body roll, no rollover in a full-lock turn at 70 km/h.
+(`web/bus-physics.js`, inlined into the page by `python3 web/sync_physics.py`),
+with no driving assists: no ABS, no stability control, no anti-roll cheat.
+12 t chassis built from the model's hitbox with a 1.5 m centre of mass, six
+raycast wheels on soft air suspension with the full physical roll moment,
+Ackermann steering, load-sensitive tyre grip (less on grass), friction-limited
+brakes that lock the wheels when you ask for more than the tyres can give, a
+diesel torque curve through a 6-speed automatic with reverse, drag, rolling
+resistance and a 110 km/h governor. Keyboard steering winds on over about
+0.8 s, so taps are small corrections and holding turns hard. Trees, poles,
+speed bumps and knock-over props collide. R resets the bus, K shows the
+hitbox and suspension rays.
+
+Measured in headless tests (`web/bus-physics.js` under Node): inside wheels
+lift at 0.52 g and the bus rolls at 0.73 g (real coaches: about 0.5-0.6 g lift);
+90-0 km/h in 39 m with locked wheels; holding full steer at 40 km/h or more,
+or a handbrake turn at 50, rolls the bus; a full swerve at 80 km/h leaves it on
+three wheels at 14 deg of lean; quick taps and half steer stay upright.
 
 Hitbox: models add collision boxes with `geo.collider()`. They export as
 `COL-*` nodes in the GLB (the web viewer builds its physics shape from them)
