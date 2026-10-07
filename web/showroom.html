@@ -1,0 +1,456 @@
+<meta charset="utf-8">
+<title>Agni Express Showroom</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;700&family=Mukta:wght@400;600;800&display=swap">
+<style>
+  /* Layout: full-bleed studio canvas. Nameplate top-left, view presets top-right,
+     spec strip bottom-left, turntable/lamp/reset controls bottom-right.
+     A deliberately dark showroom look in every theme. */
+  :root {
+    --studio: #0d0f13;       /* showroom walls */
+    --panel: rgba(16, 19, 24, 0.78);
+    --line: rgba(232, 228, 220, 0.14);
+    --fg: #ece8e0;
+    --muted: #949ca6;
+    --agni: #e0322f;         /* Agni livery red */
+    --brass: #e6b54a;        /* trim / highlight */
+    --display: "Oswald", "Arial Narrow", "Roboto Condensed", sans-serif;
+    --body: "Mukta", "Noto Sans Devanagari", system-ui, sans-serif;
+    color-scheme: dark;
+  }
+  [hidden] { display: none !important; }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--studio); color: var(--fg); font: 15px/1.45 var(--body); overflow: hidden; }
+  #stage { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; outline: none; cursor: grab; }
+  #stage:active { cursor: grabbing; }
+  .ui { position: fixed; inset: 0; pointer-events: none; display: grid; grid-template-rows: auto 1fr auto; gap: 12px;
+    padding: calc(env(safe-area-inset-top, 0px) + 16px) 16px calc(env(safe-area-inset-bottom, 0px) + 16px); }
+  .row { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+  .row.bottom { align-items: flex-end; }
+  .row > * { pointer-events: auto; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; backdrop-filter: blur(8px); }
+  .plate { padding: 12px 16px 13px; max-width: min(400px, 100%); min-width: 0; }
+  .eyebrow { font: 600 11px/1 var(--body); letter-spacing: .16em; text-transform: uppercase; color: var(--brass); }
+  h1 { margin: 6px 0 2px; font: 700 34px/1 var(--display); letter-spacing: .03em; text-wrap: balance; }
+  h1 span { color: var(--agni); }
+  .route { font: 600 15px/1.3 var(--body); }
+  .route .to { color: var(--muted); font-family: var(--display); padding-inline: 5px; }
+  .views { display: flex; gap: 4px; padding: 4px; flex-wrap: wrap; }
+  button { font: 500 13px/1 var(--display); letter-spacing: .08em; text-transform: uppercase; color: var(--fg);
+    background: transparent; border: 1px solid transparent; border-radius: 4px; padding: 9px 11px; cursor: pointer; }
+  button:hover { border-color: var(--line); }
+  button[aria-pressed="true"] { background: var(--brass); color: var(--studio); }
+  button:focus-visible { outline: 2px solid var(--brass); outline-offset: 2px; }
+  .specs { display: grid; grid-template-columns: repeat(4, auto); gap: 4px 22px; padding: 11px 16px 12px; min-width: 0; }
+  .specs dt { font: 500 11px/1 var(--display); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+  .specs dd { margin: 4px 0 0; font: 500 22px/1 var(--display); font-variant-numeric: tabular-nums; }
+  .specs dd small { font-size: 13px; color: var(--muted); margin-left: 2px; }
+  .specs div { min-width: 0; }
+  .controls { display: flex; gap: 4px; padding: 4px; flex-wrap: wrap; }
+  .hint { position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom, 0px) + 112px); transform: translateX(-50%);
+    font: 500 12px/1 var(--display); letter-spacing: .14em; text-transform: uppercase; color: var(--muted);
+    pointer-events: none; transition: opacity .6s; white-space: nowrap; }
+  .hint.gone { opacity: 0; }
+  .loader { position: fixed; inset: 0; display: grid; place-items: center; pointer-events: none; }
+  .loader-box { width: min(300px, calc(100% - 32px)); display: grid; gap: 9px; text-align: center; }
+  .loader-box p { margin: 0; font: 500 13px/1 var(--display); letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
+  .bar { height: 3px; border-radius: 2px; background: var(--line); overflow: hidden; }
+  .bar i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--agni), var(--brass)); transition: width .2s; }
+  .error { background: var(--panel); border: 1px solid var(--agni); border-radius: 6px; padding: 12px 14px; font-size: 14px; color: var(--fg); }
+  @media (max-width: 640px) {
+    h1 { font-size: 26px; }
+    .specs { grid-template-columns: repeat(2, auto); }
+    .specs dd { font-size: 18px; }
+    .hint { bottom: calc(env(safe-area-inset-bottom, 0px) + 190px); }
+  }
+  @media (prefers-reduced-motion: reduce) { .hint { transition: none; } }
+</style>
+
+<canvas id="stage" tabindex="0" aria-label="Agni Express bus on a showroom turntable. Drag to rotate, scroll to zoom."></canvas>
+<div class="loader" id="loader">
+  <div class="loader-box"><p id="loader-text">Rolling the bus onto the turntable…</p><div class="bar"><i id="bar"></i></div></div>
+</div>
+<div class="ui">
+  <div class="row">
+    <div class="plate panel">
+      <div class="eyebrow">Showroom · Super Agni A/C VIP Sofa</div>
+      <h1>AGNI <span>EXPRESS</span></h1>
+      <div class="route">काठमाण्डौ<span class="to">→</span>काँकडभिट्टा</div>
+    </div>
+    <div class="views panel" role="group" aria-label="Camera views">
+      <button data-view="front" aria-pressed="true">Front ¾</button>
+      <button data-view="side" aria-pressed="false">Side</button>
+      <button data-view="rear" aria-pressed="false">Rear ¾</button>
+      <button data-view="top" aria-pressed="false">Top</button>
+      <button data-view="low" aria-pressed="false">Low</button>
+    </div>
+  </div>
+  <div></div>
+  <div class="row bottom">
+    <dl class="specs panel">
+      <div><dt>Length</dt><dd>11.0<small>m</small></dd></div>
+      <div><dt>Width</dt><dd>2.60<small>m</small></dd></div>
+      <div><dt>Height</dt><dd>3.45<small>m</small></dd></div>
+      <div><dt>Wheelbase</dt><dd>5.80<small>m</small></dd></div>
+    </dl>
+    <div class="controls panel" role="group" aria-label="Showroom controls">
+      <button id="b-spin" aria-pressed="true" title="Spin the turntable (Space)">Turntable</button>
+      <button id="b-lamps" aria-pressed="false" title="Headlamps and tail lamps (L)">Lamps</button>
+      <button id="b-reset" title="Back to the starting view (R)">Reset</button>
+    </div>
+  </div>
+</div>
+<div class="hint" id="hint">Drag to rotate · Scroll or pinch to zoom</div>
+
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+} }
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { Reflector } from 'three/addons/objects/Reflector.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+
+const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const canvas = document.getElementById('stage');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.toneMapping = THREE.AgXToneMapping;
+renderer.toneMappingExposure = 0.92;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+// ---------------------------------------------------------------- studio
+const STUDIO = new THREE.Color(0x0d0f13);
+const scene = new THREE.Scene();
+scene.background = STUDIO;
+scene.fog = new THREE.Fog(STUDIO, 26, 62);
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.03).texture;
+scene.environmentIntensity = 0.45;
+
+// Curved backdrop wall: lit band near the floor, falling off into darkness.
+{
+  const c = document.createElement('canvas'); c.width = 4; c.height = 256;
+  const g = c.getContext('2d'), gr = g.createLinearGradient(0, 0, 0, 256);
+  gr.addColorStop(0, '#07080a'); gr.addColorStop(0.55, '#15181e'); gr.addColorStop(0.86, '#2a2e36'); gr.addColorStop(1, '#1a1d23');
+  g.fillStyle = gr; g.fillRect(0, 0, 4, 256);
+  const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
+  const wall = new THREE.Mesh(new THREE.CylinderGeometry(48, 48, 34, 96, 1, true),
+    new THREE.MeshBasicMaterial({ map: tex, side: THREE.BackSide, fog: false }));
+  wall.position.y = 17;
+  scene.add(wall);
+}
+
+// Polished floor: a mirror under a dark, partly transparent lacquer layer, so
+// the bus reflects softly and the floor fades into the room.
+const mirror = new Reflector(new THREE.CircleGeometry(48, 96), {
+  textureWidth: 1024, textureHeight: 1024, color: 0x8a8d92, clipBias: 0.003,
+});
+mirror.rotation.x = -Math.PI / 2;
+scene.add(mirror);
+const floorFade = (() => {
+  const c = document.createElement('canvas'); c.width = c.height = 256;
+  const g = c.getContext('2d'), gr = g.createRadialGradient(128, 128, 0, 128, 128, 128);
+  gr.addColorStop(0, 'rgb(205,205,205)'); gr.addColorStop(0.3, 'rgb(225,225,225)'); gr.addColorStop(1, 'rgb(255,255,255)');
+  g.fillStyle = gr; g.fillRect(0, 0, 256, 256);
+  return new THREE.CanvasTexture(c);
+})();
+const lacquer = new THREE.Mesh(new THREE.CircleGeometry(48, 96),
+  new THREE.MeshStandardMaterial({ color: 0x14161b, roughness: 0.55, metalness: 0, transparent: true, opacity: 0.84, alphaMap: floorFade }));
+lacquer.rotation.x = -Math.PI / 2;
+lacquer.position.y = 0.004;
+lacquer.receiveShadow = true;
+scene.add(lacquer);
+
+// Turntable: brushed dark disc with a glowing edge ring and fine radial grooves.
+const turntable = new THREE.Group();
+scene.add(turntable);
+const TT_R = 7.4, TT_H = 0.14;
+{
+  const c = document.createElement('canvas'); c.width = c.height = 512;
+  const g = c.getContext('2d');
+  g.fillStyle = '#2b2e34'; g.fillRect(0, 0, 512, 512);
+  for (let r = 6; r < 256; r += 3) {                     // concentric brushing
+    g.strokeStyle = `rgba(${r % 2 ? 255 : 0},${r % 2 ? 255 : 0},${r % 2 ? 255 : 0},0.035)`;
+    g.beginPath(); g.arc(256, 256, r, 0, Math.PI * 2); g.stroke();
+  }
+  g.strokeStyle = 'rgba(0,0,0,0.5)'; g.lineWidth = 2;
+  for (const r of [120, 210]) { g.beginPath(); g.arc(256, 256, r, 0, Math.PI * 2); g.stroke(); }
+  const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+  const top = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.38, metalness: 0.75 });
+  const side = new THREE.MeshStandardMaterial({ color: 0x17191d, roughness: 0.3, metalness: 0.9 });
+  const disc = new THREE.Mesh(new THREE.CylinderGeometry(TT_R, TT_R + 0.08, TT_H, 128), [side, top, side]);
+  disc.position.y = TT_H / 2;
+  disc.receiveShadow = true;
+  turntable.add(disc);
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(TT_R + 0.06, 0.025, 8, 192),
+    new THREE.MeshBasicMaterial({ color: new THREE.Color(1.6, 1.25, 0.7), toneMapped: false }));
+  ring.rotation.x = Math.PI / 2; ring.position.y = TT_H * 0.55;
+  scene.add(ring);
+}
+// Soft contact shadow under the bus (rotates with it).
+const contact = (() => {
+  const W = 64, H = 256, c = document.createElement('canvas'); c.width = W; c.height = H;
+  const g = c.getContext('2d'), img = g.createImageData(W, H);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const dx = Math.max(0, Math.abs(x / W - 0.5) - 0.22) * 3.6, dy = Math.max(0, Math.abs(y / H - 0.5) - 0.4) * 12.4;
+    const d = Math.hypot(dx, dy), a = Math.pow(1 - THREE.MathUtils.smoothstep(d, 0, 0.6), 1.5) * 0.85;
+    img.data.set([0, 0, 0, a * 255], (y * W + x) * 4);
+  }
+  g.putImageData(img, 0, 0);
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(3.6, 12.4).rotateX(-Math.PI / 2),
+    new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(c), transparent: true, depthWrite: false }));
+  m.position.y = TT_H + 0.005;
+  return m;
+})();
+turntable.add(contact);
+
+// Lights: key spot with soft shadow, two cool rim lights, a warm fill, and
+// overhead light strips the paint can catch.
+scene.add(new THREE.HemisphereLight(0xdfe6f0, 0x141519, 0.2));
+const key = new THREE.SpotLight(0xfff3e4, 300, 60, 0.5, 0.85, 1.6);
+key.position.set(9, 15, 11);
+key.castShadow = true;
+key.shadow.mapSize.set(2048, 2048);
+key.shadow.bias = -0.0002; key.shadow.normalBias = 0.02; key.shadow.radius = 4;
+key.shadow.camera.near = 5; key.shadow.camera.far = 45;
+scene.add(key, key.target);
+const rimL = new THREE.SpotLight(0x9fc0ff, 200, 50, 0.5, 0.9, 1.6); rimL.position.set(-12, 7, -10);
+const rimR = new THREE.SpotLight(0xbcd3ff, 150, 50, 0.5, 0.9, 1.6); rimR.position.set(12, 6, -12);
+const fill = new THREE.SpotLight(0xffd8b0, 70, 50, 0.6, 1, 1.6); fill.position.set(-10, 4, 12);
+for (const l of [rimL, rimR, fill]) { l.target.position.set(0, 1.5, 0); scene.add(l, l.target); }
+key.target.position.set(0, 1.2, 0);
+for (const x of [-4.5, 0, 4.5]) {
+  const strip = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.06, 16),
+    new THREE.MeshBasicMaterial({ color: new THREE.Color(2.4, 2.35, 2.25), toneMapped: false }));
+  strip.position.set(x, 13, 0);
+  scene.add(strip);
+}
+
+// ---------------------------------------------------------------- camera
+const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 200);
+const controls = new OrbitControls(camera, canvas);
+controls.enableDamping = true;
+controls.dampingFactor = 0.06;
+controls.enablePan = false;
+controls.minDistance = 6.5;
+controls.maxDistance = 40;
+controls.minPolarAngle = 0.12;
+controls.maxPolarAngle = Math.PI / 2 - 0.03;          // never under the floor
+controls.target.set(0, 1.7, 0);
+
+const VIEWS = {
+  front: { pos: [10.5, 3.6, 13.5] },
+  side:  { pos: [17.5, 2.4, 0.01] },
+  rear:  { pos: [-10, 3.8, -13.5] },
+  top:   { pos: [6, 22, 8] },
+  low:   { pos: [6.5, 0.45, 9.5], target: [0, 1.9, 1] },
+};
+let fly = null;
+function setView(name, instant = false) {
+  const v = VIEWS[name];
+  const tgt = new THREE.Vector3(...(v.target || [0, 1.7, 0]));
+  // step back on tall, narrow screens so the 11 m bus fits across
+  const fit = Math.max(1, 0.75 / Math.max(0.3, camera.aspect));
+  const to = new THREE.Vector3(...v.pos).sub(tgt).multiplyScalar(fit).add(tgt);
+  document.querySelectorAll('[data-view]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.view === name)));
+  if (instant || reduceMotion) { camera.position.copy(to); controls.target.copy(tgt); fly = null; return; }
+  fly = { start: performance.now(), p0: camera.position.clone(), t0: controls.target.clone(), p1: to, t1: tgt };
+}
+document.querySelectorAll('[data-view]').forEach(b => b.addEventListener('click', () => { setView(b.dataset.view); canvas.focus(); }));
+
+// The turntable pauses while you drag and picks up again a moment later.
+let spinning = !reduceMotion, dragging = false, resumeAt = 0;
+const spinBtn = document.getElementById('b-spin');
+spinBtn.setAttribute('aria-pressed', String(spinning));
+function setSpin(on) { spinning = on; spinBtn.setAttribute('aria-pressed', String(on)); }
+spinBtn.addEventListener('click', () => setSpin(!spinning));
+controls.addEventListener('start', () => {
+  dragging = true; fly = null;
+  document.querySelectorAll('[data-view]').forEach(b => b.setAttribute('aria-pressed', 'false'));
+  document.getElementById('hint').classList.add('gone');
+});
+controls.addEventListener('end', () => { dragging = false; resumeAt = performance.now() + 2500; });
+document.getElementById('b-reset').addEventListener('click', () => { turntableAngle = 0; setView('front'); });
+addEventListener('keydown', e => {
+  if (e.key === ' ') { e.preventDefault(); setSpin(!spinning); }
+  if (e.key === 'l' || e.key === 'L') lampBtn.click();
+  if (e.key === 'r' || e.key === 'R') document.getElementById('b-reset').click();
+});
+
+// ---------------------------------------------------------------- lamps
+const GLOW = (() => {
+  const c = document.createElement('canvas'); c.width = c.height = 128;
+  const g = c.getContext('2d'), gr = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+  gr.addColorStop(0, 'rgba(255,255,255,1)'); gr.addColorStop(0.14, 'rgba(255,255,255,0.8)');
+  gr.addColorStop(0.4, 'rgba(255,255,255,0.18)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = gr; g.fillRect(0, 0, 128, 128);
+  return new THREE.CanvasTexture(c);
+})();
+const bus = new THREE.Group();
+bus.position.y = TT_H;
+turntable.add(bus);
+const lamps = [];
+function lamp(x, y, z, nz, color, size, k) {
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: GLOW, color: new THREE.Color(color).multiplyScalar(k),
+    blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false, transparent: true }));
+  sp.position.set(x, y, z); sp.scale.setScalar(size); sp.visible = false;
+  bus.add(sp);
+  lamps.push({ sp, nz, size });
+}
+for (const sx of [-1, 1]) {
+  lamp(sx * 1.08, 0.93, 5.52, 1, 0xfff4e6, 0.55, 3);
+  lamp(sx * 0.55, 0.61, 5.53, 1, 0xffe9c6, 0.4, 2);
+  lamp(sx * 1.08, 1.3, -5.55, -1, 0xff1a0a, 0.6, 2.5);
+}
+const beams = [];
+for (const x of [-1.08, 1.08]) {
+  const l = new THREE.SpotLight(0xfff1dc, 0, 30, 0.42, 0.6, 1.5);
+  l.position.set(x, 0.95, 5.6); l.target.position.set(x * 1.4, 0, 20);
+  bus.add(l, l.target); beams.push(l);
+}
+const lampBtn = document.getElementById('b-lamps');
+let lampsOn = false;
+lampBtn.addEventListener('click', () => {
+  lampsOn = !lampsOn;
+  lampBtn.setAttribute('aria-pressed', String(lampsOn));
+  lamps.forEach(l => { l.sp.visible = lampsOn; });
+  beams.forEach(l => { l.intensity = lampsOn ? 160 : 0; });
+  // dim the house lights a touch so the lamps read
+  key.intensity = lampsOn ? 190 : 300;
+  scene.environmentIntensity = lampsOn ? 0.32 : 0.45;
+});
+const camW = new THREE.Vector3(), lampW = new THREE.Vector3(), nW = new THREE.Vector3();
+function fadeLamps() {
+  if (!lampsOn) return;
+  camera.getWorldPosition(camW);
+  for (const l of lamps) {
+    l.sp.getWorldPosition(lampW);
+    nW.set(0, 0, l.nz).transformDirection(bus.matrixWorld);
+    const f = THREE.MathUtils.clamp(nW.dot(camW.clone().sub(lampW).normalize()) * 1.8, 0, 1);
+    l.sp.material.opacity = f;
+    l.sp.scale.setScalar(l.size * (0.5 + 0.5 * f));
+  }
+}
+
+// ---------------------------------------------------------------- post
+// HDR -> clean NaN/overflow -> gentle bloom (ring, strips, lamps) -> AgX -> vignette.
+const composer = new EffectComposer(renderer, new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples: 4 }));
+composer.addPass(new RenderPass(scene, camera));
+const quad = { vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }' };
+composer.addPass(new ShaderPass({ ...quad,
+  uniforms: { tDiffuse: { value: null } },
+  fragmentShader: `uniform sampler2D tDiffuse; varying vec2 vUv;
+    void main(){ vec3 v = texture2D(tDiffuse, vUv).rgb;
+      bool bad = !(v.r == v.r && v.g == v.g && v.b == v.b) || any(isinf(v)) || any(isnan(v));
+      gl_FragColor = vec4(bad ? vec3(0.0) : clamp(v, 0.0, 48.0), 1.0); }` }));
+composer.addPass(new UnrealBloomPass(new THREE.Vector2(256, 256), 0.3, 0.45, 2.2));
+composer.addPass(new OutputPass());
+composer.addPass(new ShaderPass({ ...quad,
+  uniforms: { tDiffuse: { value: null } },
+  fragmentShader: `uniform sampler2D tDiffuse; varying vec2 vUv;
+    void main(){ vec4 c = texture2D(tDiffuse, vUv); vec2 d = vUv - 0.5;
+      gl_FragColor = vec4(c.rgb * (1.0 - 0.38 * smoothstep(0.2, 0.9, dot(d, d) * 2.4)), c.a); }` }));
+
+// ---------------------------------------------------------------- model
+// Lacquered paint: the baked atlas gets a clearcoat on its glossy areas only.
+function lacquerPaint(m) {
+  const p = {
+    name: m.name, color: m.color, map: m.map, normalMap: m.normalMap, normalScale: m.normalScale,
+    roughness: m.roughness, metalness: m.metalness, roughnessMap: m.roughnessMap, metalnessMap: m.metalnessMap,
+    emissive: m.emissive, emissiveMap: m.emissiveMap, emissiveIntensity: m.emissiveIntensity * 1.4,
+    side: m.side, clearcoat: 0.8, clearcoatRoughness: 0.12,
+  };
+  for (const k in p) if (p[k] == null) delete p[k];
+  const pm = new THREE.MeshPhysicalMaterial(p);
+  pm.onBeforeCompile = sh => {
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\n\tfloat coatMask = 1.0 - smoothstep(0.28, 0.5, roughnessFactor);')
+      .replace('#include <lights_physical_fragment>', THREE.ShaderChunk.lights_physical_fragment.replace('material.clearcoat = clearcoat;', 'material.clearcoat = clearcoat * coatMask;'))
+      .replace('#include <dithering_fragment>', '#include <dithering_fragment>\n\tgl_FragColor.rgb = clamp(gl_FragColor.rgb, 0.0, 48.0);');
+  };
+  pm.customProgramCacheKey = () => 'showroom-coat';
+  return pm;
+}
+
+const bar = document.getElementById('bar');
+const fileLoader = new THREE.FileLoader();
+fileLoader.setResponseType('text');
+fileLoader.load('agni_bus.glb.b64.txt', b64 => {
+  const bin = Uint8Array.from(atob(b64.trim()), c => c.charCodeAt(0));
+  const loader = new GLTFLoader();
+  // Embedded textures load through <img> (strict hosts block the fetch-based loader).
+  loader.register(parser => { parser.textureLoader = new THREE.TextureLoader(parser.options.manager); return { name: 'img_textures' }; });
+  loader.parse(bin.buffer, '', gltf => {
+    const done = new Map();
+    gltf.scene.traverse(o => {
+      if (o.name.startsWith('COL-')) { o.visible = false; return; }
+      if (!o.isMesh) return;
+      o.castShadow = o.receiveShadow = true;
+      const m = o.material;
+      if (m.transmission > 0) {
+        m.thickness = 0.01; m.envMapIntensity = 1.4; m.roughness = Math.max(0.08, Math.min(m.roughness, 0.12));
+        o.castShadow = false;
+        return;
+      }
+      if (!done.has(m)) done.set(m, lacquerPaint(m));
+      o.material = done.get(m);
+    });
+    bus.add(gltf.scene);
+    document.getElementById('loader').hidden = true;
+    canvas.focus();
+  }, fail);
+}, e => { if (e.total) bar.style.width = (100 * e.loaded / e.total).toFixed(0) + '%'; }, fail);
+function fail(err) {
+  console.error(err);
+  document.getElementById('loader-text').parentElement.innerHTML =
+    '<div class="error">The bus model did not load. Serve this folder over HTTP (for example <code>python3 -m http.server</code>) and check your connection to cdn.jsdelivr.net.</div>';
+}
+
+// ---------------------------------------------------------------- loop
+function resize() {
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  renderer.setSize(w, h, false);
+  composer.setPixelRatio(renderer.getPixelRatio());
+  composer.setSize(w, h);
+  mirror.getRenderTarget().setSize(Math.min(2048, w * renderer.getPixelRatio()), Math.min(2048, h * renderer.getPixelRatio()));
+  camera.aspect = w / h;
+  // keep the whole bus in frame on narrow screens
+  camera.fov = w / h < 0.9 ? 55 : 38;
+  camera.updateProjectionMatrix();
+}
+addEventListener('resize', resize);
+resize();
+setView('front', true);
+
+let turntableAngle = 0;
+const clock = new THREE.Clock();
+const ease = t => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+renderer.setAnimationLoop(() => {
+  const dt = Math.min(clock.getDelta(), 0.05);
+  if (spinning && !dragging && performance.now() > resumeAt) turntableAngle += dt * 0.16;
+  turntable.rotation.y = turntableAngle;
+  if (fly) {
+    const t = Math.min(1, (performance.now() - fly.start) / 1300), k = ease(t);
+    camera.position.lerpVectors(fly.p0, fly.p1, k);
+    controls.target.lerpVectors(fly.t0, fly.t1, k);
+    if (t >= 1) fly = null;
+  }
+  controls.update();
+  fadeLamps();
+  composer.render(dt);
+});
+window.showroom = { camera, controls, setView, setSpin };
+</script>
