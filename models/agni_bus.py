@@ -45,7 +45,7 @@ def build():
     mats = {
         "paint": M.painted_metal("MAT-white_paint", paint=(0.92, 0.92, 0.9), wear=0.08, grime=0.3,
                                  paint_roughness=0.16, metal_color=(0.7, 0.7, 0.72)),
-        "glass": M.glass("MAT-tinted_glass", (0.24, 0.26, 0.28), roughness=0.03),
+        "glass": M.glass("MAT-tinted_glass", (0.11, 0.12, 0.13), roughness=0.03),
         "interior": M.plastic("MAT-interior_lining", (0.62, 0.56, 0.48), roughness=0.7),
         "fabric": M.plastic("MAT-seat_velvet", (0.32, 0.03, 0.05), roughness=0.9),
         "cover": M.plastic("MAT-headrest_cover", (0.92, 0.9, 0.86), roughness=0.85),
@@ -651,7 +651,7 @@ def _interior(m):
     lamp = bpy.data.lights.new("LGT-cabin", "AREA")
     lamp.shape = "RECTANGLE"
     lamp.size, lamp.size_y = 1.2, L - 2.0
-    lamp.energy = 900
+    lamp.energy = 350
     lamp.color = (1.0, 0.93, 0.85)
     lo = bpy.data.objects.new("LGT-cabin", lamp)
     lo.location = (0, 0.3, Z1 - 0.12)
