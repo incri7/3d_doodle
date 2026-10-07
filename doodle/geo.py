@@ -98,31 +98,80 @@ def rounded_rect_profile(width, z0, z1, radius, steps=6):
     return pts
 
 
-FONT_DEVANAGARI = "/usr/share/fonts/truetype/freefont/FreeSerifBold.ttf"
-
-
-def text(name, body, size=0.2, depth=0.004, location=(0, 0, 0), rotation=(0, 0, 0),
-         font=FONT_DEVANAGARI, coll=None):
-    """Text as a real mesh (exports and bakes like any other part).
-    Centered on `location`. Default font covers Latin and Devanagari; Blender
-    has no complex-script shaping, so prefer words without conjuncts or
-    pre-base vowel signs (ि)."""
-    cu = bpy.data.curves.new(name, "FONT")
-    cu.body = body
-    cu.font = bpy.data.fonts.load(font, check_existing=True)
-    cu.size = size
+def flat_shape(name, contours, depth=0.004, location=(0, 0, 0), rotation=(0, 0, 0), coll=None):
+    """Filled 2D shape(s) extruded by `depth`, as a mesh. `contours` are
+    closed polylines [(x, y), ...] in the local XY plane; nested contours
+    become holes (even-odd), so letters with counters just work.
+    Place on a surface with `rotation`, e.g. (pi/2, 0, 0) to face -Y."""
+    cu = bpy.data.curves.new(name, "CURVE")
+    cu.dimensions = "2D"
+    cu.fill_mode = "BOTH"
     cu.extrude = depth / 2
-    cu.align_x = "CENTER"
-    cu.align_y = "CENTER"
+    for c in contours:
+        sp = cu.splines.new("POLY")
+        sp.points.add(len(c) - 1)
+        for pt, (x, y) in zip(sp.points, c):
+            pt.co = (x, y, 0, 1)
+        sp.use_cyclic_u = True
     tmp = bpy.data.objects.new(name + "_curve", cu)
     bpy.context.scene.collection.objects.link(tmp)
     depsgraph = bpy.context.evaluated_depsgraph_get()
     me = bpy.data.meshes.new_from_object(tmp.evaluated_get(depsgraph))
     bpy.data.objects.remove(tmp)
+    bpy.data.curves.remove(cu)
     obj = bpy.data.objects.new(name, me)
     obj.location = location
     obj.rotation_euler = rotation
     return _link(obj, coll)
+
+
+def text(name, body, size=0.2, depth=0.004, location=(0, 0, 0), rotation=(0, 0, 0),
+         font="devanagari", tracking=0.0, skew=0.0, coll=None):
+    """Shaped text (HarfBuzz, so Devanagari conjuncts are correct) as a mesh,
+    centered on `location`. `size` is the em size in meters. Fonts: see
+    textshape.FONTS (devanagari, condensed, italic, wide, black) or a path.
+    skew > 0 slants it like italic."""
+    from . import textshape
+    contours = textshape.outlines(body, size, font, tracking=tracking)
+    if skew:
+        contours = [[(x + y * skew, y) for x, y in c] for c in contours]
+    return flat_shape(name, contours, depth, location, rotation, coll)
+
+
+def tube(name, points, radius=0.02, location=(0, 0, 0), resolution=8, coll=None):
+    """Smooth round tube through 3D `points` (mirror arms, rails, handles)."""
+    cu = bpy.data.curves.new(name, "CURVE")
+    cu.dimensions = "3D"
+    cu.bevel_depth = radius
+    cu.bevel_resolution = 3
+    cu.use_fill_caps = True
+    sp = cu.splines.new("NURBS")
+    sp.points.add(len(points) - 1)
+    for pt, co in zip(sp.points, points):
+        pt.co = (*co, 1)
+    sp.use_endpoint_u = True
+    sp.order_u = min(4, len(points))
+    sp.resolution_u = resolution
+    tmp = bpy.data.objects.new(name + "_curve", cu)
+    bpy.context.scene.collection.objects.link(tmp)
+    me = bpy.data.meshes.new_from_object(tmp.evaluated_get(bpy.context.evaluated_depsgraph_get()))
+    bpy.data.objects.remove(tmp)
+    bpy.data.curves.remove(cu)
+    obj = bpy.data.objects.new(name, me)
+    obj.location = location
+    obj.data.shade_smooth()
+    return _link(obj, coll)
+
+
+def bezier(p0, p1, p2, p3, steps=16):
+    """Points along a 2D cubic Bezier (excluding p0), for building outlines."""
+    out = []
+    for i in range(1, steps + 1):
+        t = i / steps
+        u = 1 - t
+        out.append((u ** 3 * p0[0] + 3 * u * u * t * p1[0] + 3 * u * t * t * p2[0] + t ** 3 * p3[0],
+                    u ** 3 * p0[1] + 3 * u * u * t * p1[1] + 3 * u * t * t * p2[1] + t ** 3 * p3[1]))
+    return out
 
 
 # --- modifiers -------------------------------------------------------------
@@ -164,12 +213,17 @@ def array(obj, count=3, offset=(1.1, 0, 0), relative=True):
     return m
 
 
-def cut(obj, cutter, operation="DIFFERENCE", hide=True):
-    """Boolean `cutter` into `obj`. The cutter is hidden from renders/exports."""
+def cut(obj, cutter, operation="DIFFERENCE", hide=True, material=None):
+    """Boolean `cutter` into `obj`. The cutter is hidden from renders/exports.
+    With `material`, the newly cut faces get that material (e.g. black arch
+    liners) instead of the object's own."""
     m = obj.modifiers.new(f"Bool_{cutter.name}", "BOOLEAN")
     m.object = cutter
     m.operation = operation
     m.solver = "EXACT"
+    if material is not None:
+        cutter.data.materials.append(material)
+        m.material_mode = "TRANSFER"
     if hide:
         cutter.hide_render = True
         cutter.display_type = "WIRE"

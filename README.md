@@ -56,6 +56,15 @@ bash setup.sh                                  # installs Blender 5.2 as a Pytho
 | Model | Tris | Notes |
 |---|---|---|
 | `crate` | ~9.6k | Sci-fi supply crate, pipeline test |
+| `nepali_bus` | | Classic Tata-style Nepali long-route bus (starting model) |
+| `agni_bus` | | Agni Express "Super Agni A/C VIP Sofa" coach, from user photos |
+
+## Text and lettering
+
+`geo.text()` shapes text with HarfBuzz and builds the real glyph outlines as
+mesh, so Devanagari conjuncts (काठमाण्डौ, काँकडभिट्टा) come out correct and
+lettering bakes and exports like any other part. Fonts are in `assets/fonts/`
+(all SIL OFL): Mukta, Noto Sans Devanagari, Oswald, Exo 2, Michroma, Archivo Black.
 
 ## Credits
 

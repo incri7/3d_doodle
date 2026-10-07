@@ -33,6 +33,8 @@ Output in `output/<model>/`: `hero.png`, `views.png` (front/right/back/top),
 - `doodle/render.py`: Cycles CPU setup, auto-framing camera, hero/views/turntable.
 - `doodle/export.py`: join, triangulate, smart-UV, bake every Principled input to
   textures, single atlas material, GLB + FBX.
+- `doodle/textshape.py` + `geo.text()`: HarfBuzz-shaped text (any script) as mesh;
+  `geo.flat_shape()` for vector decals; `geo.tube()` for bent rods.
 - `models/<name>.py`: one file per model; defines `build()` and optional `LIGHTING`.
 - `docs/reference/`: recipes and real-world dimensions (MIT, from cc-blender-skill).
 
