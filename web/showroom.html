@@ -283,7 +283,7 @@ const spinBtn = document.getElementById('b-spin');
 spinBtn.setAttribute('aria-pressed', String(spinning));
 function setSpin(on) { spinning = on; spinBtn.setAttribute('aria-pressed', String(on)); }
 spinBtn.addEventListener('click', () => setSpin(!spinning));
-document.getElementById('b-back').addEventListener('click', () => { location.href = 'main.html'; });
+document.getElementById('b-back').addEventListener('click', () => { location.href = 'index.html'; });
 controls.addEventListener('start', () => {
   dragging = true; fly = null;
   document.querySelectorAll('[data-view]').forEach(b => b.setAttribute('aria-pressed', 'false'));
