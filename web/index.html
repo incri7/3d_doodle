@@ -32,7 +32,6 @@
 
   .hud { position: fixed; inset: 0; pointer-events: none; display: grid;
     grid-template-rows: auto 1fr auto; padding: calc(env(safe-area-inset-top, 0px) + 16px) 16px calc(env(safe-area-inset-bottom, 0px) + 16px); gap: 12px; }
-  .hud > * { pointer-events: auto; }
   .top { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; pointer-events: none; }
   .top > * { pointer-events: auto; }
 
@@ -254,10 +253,20 @@ const fileLoader = new THREE.FileLoader();
 fileLoader.setResponseType('text');
 fileLoader.load('agni_bus.glb.b64.txt', b64 => {
   const bin = Uint8Array.from(atob(b64.trim()), c => c.charCodeAt(0));
-  new GLTFLoader().parse(bin.buffer, '', onModel, onError);
+  const loader = new GLTFLoader();
+  // Embedded textures become blob: URLs. ImageBitmapLoader fetch()es them,
+  // which strict hosts block (the bus then renders untextured white); an
+  // <img>-based TextureLoader is allowed everywhere.
+  loader.register(parser => {
+    parser.textureLoader = new THREE.TextureLoader(parser.options.manager);
+    return { name: 'img_textures' };
+  });
+  loader.parse(bin.buffer, '', onModel, onError);
 }, e => {
   if (e.total) bar.style.width = (100 * e.loaded / e.total).toFixed(0) + '%';
 }, onError);
+
+window.viewer = { camera, controls };  // handy for debugging in the console
 
 function onModel(gltf) {
   const bus = gltf.scene;
