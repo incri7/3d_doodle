@@ -42,7 +42,25 @@ def front_y(z):
 
 def build():
     BODY.clear()
-    mats = {
+    mats = materials()
+    _body(mats)
+    _glazing(mats)
+    _front(mats)
+    _mirrors(mats)
+    _side_graphics_door_side(mats)
+    _side_graphics_driver_side(mats)
+    _rear(mats)
+    _wheels(mats)
+    _roof(mats)
+    _interior(mats)
+    _tag_moving_parts()
+    _hitbox()
+
+
+def materials():
+    """The coach's materials. Skins (models/*_bus.py) start from these and
+    swap the paint and graphics colours; the shape stays the same."""
+    return {
         "paint": M.painted_metal("MAT-white_paint", paint=(0.92, 0.92, 0.9), wear=0.08, grime=0.3,
                                  paint_roughness=0.16, metal_color=(0.7, 0.7, 0.72)),
         "glass": M.glass("MAT-tinted_glass", (0.11, 0.12, 0.13), roughness=0.03),
@@ -68,18 +86,6 @@ def build():
         "led_red": M.emissive("MAT-red_led", (1.0, 0.03, 0.02), strength=3.0),
         "tail": M.emissive("MAT-tail_lamp", (0.85, 0.02, 0.02), strength=1.0),
     }
-    _body(mats)
-    _glazing(mats)
-    _front(mats)
-    _mirrors(mats)
-    _side_graphics_door_side(mats)
-    _side_graphics_driver_side(mats)
-    _rear(mats)
-    _wheels(mats)
-    _roof(mats)
-    _interior(mats)
-    _tag_moving_parts()
-    _hitbox()
 
 
 # --- placement helpers ---------------------------------------------------------
@@ -123,10 +129,11 @@ def _side_cuts():
     return ys, zs
 
 
-def on_side(name, contours, side, mat, depth=0.004, lift=0.0):
+def on_side(name, contours, side, mat, depth=0.004, lift=0.0, clip=True):
     """Shape on the +X (side=1) or -X (side=-1) flank. Contours are in world
-    (y, z), so the same numbers mean the same spot on the bus."""
-    if min(z for c in contours for _, z in c) < TYRE_R + 0.75:
+    (y, z), so the same numbers mean the same spot on the bus. clip=False
+    skips the wheel-arch trim (keeps nested shapes like logos intact)."""
+    if clip and min(z for c in contours for _, z in c) < TYRE_R + 0.75:
         # Graphics never span the wheel openings: trim them out in 2D.
         holes = [[(ay + (TYRE_R + 0.14) * math.cos(a), TYRE_R + 0.02 + (TYRE_R + 0.14) * math.sin(a))
                   for a in [2 * PI * i / 48 for i in range(48)]] for ay in (AXLE_F, AXLE_R)]
@@ -301,6 +308,11 @@ def _glazing(m):
 # --- front ------------------------------------------------------------------------
 
 def _front(m):
+    _front_livery(m)
+    _front_hardware(m)
+
+
+def _front_livery(m):
     zt = Z1 - 0.26
     # Header band behind the glass top: big white AGNI, orange rule beneath.
     on_front("GEO-ws_header", [rect(-1.12, zt - 0.42, 1.12, zt)], m["black"], lift=0.008,
@@ -325,6 +337,9 @@ def _front(m):
     arc = arc_top + [(x, z - 0.035) for x, z in reversed(arc_top)]
     on_front("GEO-led_strip", [arc], m["led_red"], z_hint=1.3)
 
+
+def _front_hardware(m):
+    """Grille, lamps, bumper, plate, wipers and marker lamps: the same on every skin."""
     # Grille slot with a diagonal chrome badge.
     slot = rounded_rect(-0.95, 1.16, 0.95, 1.36, 0.06)
     on_front("GEO-grille", [slot], m["black"], z_hint=1.0)
@@ -359,7 +374,7 @@ def _front(m):
         wedge = [(sx * 0.88, 0.8), (sx * 1.0, 0.8), (sx * 0.93, 0.68), (sx * 0.84, 0.66)]
         if sx < 0:
             wedge = wedge[::-1]
-        on_front("GEO-bumper_wedge", [wedge], m["red"], lift=0.004, z_hint=1.0)
+        on_front("GEO-bumper_wedge", [wedge], m.get("accent", m["red"]), lift=0.004, z_hint=1.0)
         on_front("GEO-fog_pod", [rounded_rect(sx * 0.55 - 0.1, 0.5, sx * 0.55 + 0.1, 0.72, 0.04)],
                  m["black"], depth=0.02, z_hint=1.0)
         on_front("GEO-fog_lamp", [circle(sx * 0.55, 0.61, 0.07)], m["lens"], depth=0.01, lift=0.014,
@@ -486,6 +501,11 @@ def _side_markers(m, s):
 # --- rear -------------------------------------------------------------------------
 
 def _rear(m):
+    _rear_livery(m)
+    _rear_hardware(m)
+
+
+def _rear_livery(m):
     # Upper black glass with the lit AGNI sign and an LED row.
     on_rear("GEO-rear_glass", [rounded_rect(-1.15, 2.35, 1.15, Z1 - 0.2, 0.1)], m["glass"])
     rear_text("GEO-rear_agni", "AGNI", 0.12, 2.92, 0.42, m["yellow"], font="black", lift=0.004)
@@ -505,11 +525,15 @@ def _rear(m):
     brow_low = [(x, z - 0.16) for x, z in reversed(brow)]
     on_rear("GEO-rear_brow", [brow + brow_low], m["red"])
     on_rear("GEO-rear_lamp_strip", [rounded_rect(-0.34, 1.62, 0.34, 1.7, 0.03)], m["white"], lift=0.003)
-    # Engine hatch outline and the deity art (Om glyph stands in for Ganesh).
+    # Deity art on the engine hatch (Om glyph stands in for Ganesh).
+    rear_text("GEO-rear_om", "ॐ", 0, 1.25, 0.42, m["red"], depth=0.004)
+
+
+def _rear_hardware(m):
+    """Hatch seam, lamps, plate and bumper: the same on every skin."""
     outer = rounded_rect(-0.95, 0.82, 0.95, 1.6, 0.08)
     inner = rounded_rect(-0.935, 0.835, 0.935, 1.585, 0.07)
     on_rear("GEO-hatch_seam", [outer, inner], m["black"], depth=0.003)
-    rear_text("GEO-rear_om", "ॐ", 0, 1.25, 0.42, m["red"], depth=0.004)
     on_rear("GEO-hatch_badge", [rounded_rect(-0.06, 0.9, 0.06, 0.95, 0.02)], m["chrome"])
     # Tail lamps: tall red clusters on the rear corners.
     for sx in (-1, 1):

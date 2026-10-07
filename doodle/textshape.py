@@ -79,6 +79,39 @@ class _FlattenPen(BasePen):
     _endPath = _closePath
 
 
+def _union(contours):
+    """Merge overlapping glyph outlines (Devanagari vowel signs overlap the
+    next letter's headline) into clean contours. Fonts use non-zero winding;
+    the mesh fill is even-odd, so overlaps would otherwise punch holes or
+    drop pieces."""
+    import pathops
+    from fontTools.pens.recordingPen import RecordingPen
+
+    path = pathops.Path(fillType=pathops.FillType.WINDING)
+    pen = path.getPen()
+    for c in contours:
+        pen.moveTo(c[0])
+        for pt in c[1:]:
+            pen.lineTo(pt)
+        pen.closePath()
+    path = pathops.simplify(path, fix_winding=True)
+    rec = RecordingPen()
+    path.draw(rec)
+    out, cur = [], []
+    for cmd, pts in rec.value:
+        if cmd == "moveTo":
+            cur = [pts[0]]
+        elif cmd == "lineTo":
+            cur.append(pts[0])
+        elif cmd in ("qCurveTo", "curveTo"):
+            cur.extend(pts)
+        elif cmd in ("closePath", "endPath"):
+            if len(cur) > 2:
+                out.append(cur)
+            cur = []
+    return out
+
+
 def outlines(text, size, font="devanagari", steps=5, tracking=0.0):
     """Contours [[(x, y), ...], ...] for `text` at an em size of `size` meters,
     centered on the origin. tracking: extra letter spacing in em."""
@@ -99,6 +132,7 @@ def outlines(text, size, font="devanagari", steps=5, tracking=0.0):
         pen_y += pos.y_advance
     if not contours:
         return []
+    contours = _union(contours)
     xs = [x for c in contours for x, _ in c]
     ys = [y for c in contours for _, y in c]
     cx, cy = (min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2

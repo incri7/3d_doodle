@@ -119,6 +119,23 @@ def flat_shape(name, contours, depth=0.004, location=(0, 0, 0), rotation=(0, 0, 
     me = bpy.data.meshes.new_from_object(tmp.evaluated_get(depsgraph))
     bpy.data.objects.remove(tmp)
     bpy.data.curves.remove(cu)
+    if depth == 0:
+        # A flat sheet must face +Z everywhere. The curve fill can leave
+        # zero-area slivers and flipped faces; they bend the vertex normals so
+        # thin strokes sink under neighbouring decals once given thickness.
+        import bmesh
+        bm = bmesh.new()
+        bm.from_mesh(me)
+        bmesh.ops.dissolve_degenerate(bm, dist=1e-6, edges=bm.edges[:])
+        slivers = [f for f in bm.faces if f.calc_area() < 1e-10]
+        if slivers:
+            bmesh.ops.delete(bm, geom=slivers, context="FACES_ONLY")
+        for f in bm.faces:
+            f.normal_update()
+            if f.normal.z < 0:
+                f.normal_flip()
+        bm.to_mesh(me)
+        bm.free()
     obj = bpy.data.objects.new(name, me)
     obj.location = location
     obj.rotation_euler = rotation
