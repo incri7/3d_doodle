@@ -112,7 +112,8 @@
       <div class="skins">
         <button id="b-skins" aria-haspopup="menu" aria-expanded="false" aria-controls="skins-menu">Skins ▾</button>
         <div class="skins-menu panel" id="skins-menu" role="menu" hidden>
-          <button role="menuitemradio" aria-checked="true">Agni Express</button>
+          <button role="menuitemradio" aria-checked="true" data-skin="agni_bus.glb.b64.txt">Agni Express</button>
+          <button role="menuitemradio" aria-checked="false" data-skin="sajha_bus.glb.b64.txt">Sajha Yatayat</button>
         </div>
       </div>
     </div>
@@ -412,33 +413,58 @@ function lacquerPaint(m) {
 }
 
 const bar = document.getElementById('bar');
-const fileLoader = new THREE.FileLoader();
-fileLoader.setResponseType('text');
-fileLoader.load('agni_bus.glb.b64.txt', b64 => {
-  const bin = Uint8Array.from(atob(b64.trim()), c => c.charCodeAt(0));
-  const loader = new GLTFLoader();
-  // Embedded textures load through <img> (strict hosts block the fetch-based loader).
-  loader.register(parser => { parser.textureLoader = new THREE.TextureLoader(parser.options.manager); return { name: 'img_textures' }; });
-  loader.parse(bin.buffer, '', gltf => {
-    const done = new Map();
-    gltf.scene.traverse(o => {
-      if (o.name.startsWith('COL-')) { o.visible = false; return; }
-      if (!o.isMesh) return;
-      o.castShadow = o.receiveShadow = true;
-      const m = o.material;
-      if (m.transmission > 0) {
-        m.thickness = 0.01; m.envMapIntensity = 1.4; m.roughness = Math.max(0.08, Math.min(m.roughness, 0.12));
-        o.castShadow = false;
-        return;
-      }
-      if (!done.has(m)) done.set(m, lacquerPaint(m));
-      o.material = done.get(m);
-    });
-    bus.add(gltf.scene);
-    document.getElementById('loader').hidden = true;
-    canvas.focus();
-  }, fail);
-}, e => { if (e.total) bar.style.width = (100 * e.loaded / e.total).toFixed(0) + '%'; }, fail);
+// Skins: each is the same coach exported with its own livery. Loaded on
+// first pick, then kept, so switching back is instant.
+const skins = {};
+let shown = null;
+function prepare(gltf) {
+  const done = new Map();
+  gltf.scene.traverse(o => {
+    if (o.name.startsWith('COL-')) { o.visible = false; return; }
+    if (!o.isMesh) return;
+    o.castShadow = o.receiveShadow = true;
+    const m = o.material;
+    if (m.transmission > 0) {
+      m.thickness = 0.01; m.envMapIntensity = 1.4; m.roughness = Math.max(0.08, Math.min(m.roughness, 0.12));
+      o.castShadow = false;
+      return;
+    }
+    if (!done.has(m)) done.set(m, lacquerPaint(m));
+    o.material = done.get(m);
+  });
+  return gltf.scene;
+}
+function show(model) {
+  if (shown) bus.remove(shown);
+  bus.add(model);
+  shown = model;
+  document.getElementById('loader').hidden = true;
+}
+function loadSkin(file) {
+  if (skins[file]) { show(skins[file]); return; }
+  bar.style.width = '0';
+  document.getElementById('loader').hidden = false;
+  const fileLoader = new THREE.FileLoader();
+  fileLoader.setResponseType('text');
+  fileLoader.load(file, b64 => {
+    const bin = Uint8Array.from(atob(b64.trim()), c => c.charCodeAt(0));
+    const loader = new GLTFLoader();
+    // Embedded textures load through <img> (strict hosts block the fetch-based loader).
+    loader.register(parser => { parser.textureLoader = new THREE.TextureLoader(parser.options.manager); return { name: 'img_textures' }; });
+    loader.parse(bin.buffer, '', gltf => {
+      skins[file] = prepare(gltf);
+      show(skins[file]);
+    }, fail);
+  }, e => { if (e.total) bar.style.width = (100 * e.loaded / e.total).toFixed(0) + '%'; }, fail);
+}
+loadSkin('agni_bus.glb.b64.txt');
+skinsMenu.querySelectorAll('[data-skin]').forEach(item => item.addEventListener('click', () => {
+  skinsMenu.querySelectorAll('[data-skin]').forEach(i => i.setAttribute('aria-checked', String(i === item)));
+  skinsMenu.hidden = true;
+  skinsBtn.setAttribute('aria-expanded', 'false');
+  loadSkin(item.dataset.skin);
+  canvas.focus();
+}));
 function fail(err) {
   console.error(err);
   document.getElementById('loader-text').parentElement.innerHTML =
