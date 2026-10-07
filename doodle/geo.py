@@ -66,6 +66,65 @@ def torus(name, major=0.5, minor=0.1, major_seg=48, minor_seg=12, location=(0, 0
     return mesh_object(name, bm, location, coll)
 
 
+def profile_prism(name, profile_xz, y0, y1, location=(0, 0, 0), coll=None):
+    """Extrude a closed 2D outline in the XZ plane along Y from y0 to y1.
+    Good for vehicle bodies: draw the cross-section, extrude the length."""
+    bm = bmesh.new()
+    front = [bm.verts.new((x, y0, z)) for x, z in profile_xz]
+    back = [bm.verts.new((x, y1, z)) for x, z in profile_xz]
+    n = len(profile_xz)
+    bm.faces.new(front[::-1])
+    bm.faces.new(back)
+    for i in range(n):
+        j = (i + 1) % n
+        bm.faces.new((front[i], front[j], back[j], back[i]))
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+    return mesh_object(name, bm, location, coll)
+
+
+def rounded_rect_profile(width, z0, z1, radius, steps=6):
+    """Cross-section with vertical sides and rounded top corners (bus/van roof)."""
+    hw = width / 2
+    pts = [(-hw, z0), (hw, z0), (hw, z1 - radius)]
+    for i in range(1, steps):
+        a = (math.pi / 2) * i / steps
+        pts.append((hw - radius + radius * math.cos(a), z1 - radius + radius * math.sin(a)))
+    pts.append((hw - radius, z1))
+    pts.append((-hw + radius, z1))
+    for i in range(1, steps):
+        a = math.pi / 2 + (math.pi / 2) * i / steps
+        pts.append((-hw + radius + radius * math.cos(a), z1 - radius + radius * math.sin(a)))
+    pts.append((-hw, z1 - radius))
+    return pts
+
+
+FONT_DEVANAGARI = "/usr/share/fonts/truetype/freefont/FreeSerifBold.ttf"
+
+
+def text(name, body, size=0.2, depth=0.004, location=(0, 0, 0), rotation=(0, 0, 0),
+         font=FONT_DEVANAGARI, coll=None):
+    """Text as a real mesh (exports and bakes like any other part).
+    Centered on `location`. Default font covers Latin and Devanagari; Blender
+    has no complex-script shaping, so prefer words without conjuncts or
+    pre-base vowel signs (ि)."""
+    cu = bpy.data.curves.new(name, "FONT")
+    cu.body = body
+    cu.font = bpy.data.fonts.load(font, check_existing=True)
+    cu.size = size
+    cu.extrude = depth / 2
+    cu.align_x = "CENTER"
+    cu.align_y = "CENTER"
+    tmp = bpy.data.objects.new(name + "_curve", cu)
+    bpy.context.scene.collection.objects.link(tmp)
+    depsgraph = bpy.context.evaluated_depsgraph_get()
+    me = bpy.data.meshes.new_from_object(tmp.evaluated_get(depsgraph))
+    bpy.data.objects.remove(tmp)
+    obj = bpy.data.objects.new(name, me)
+    obj.location = location
+    obj.rotation_euler = rotation
+    return _link(obj, coll)
+
+
 # --- modifiers -------------------------------------------------------------
 
 def bevel(obj, width=0.02, segments=3, angle=30, harden=True):

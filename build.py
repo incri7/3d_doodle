@@ -48,7 +48,8 @@ def main():
     if not args.no_render:
         q = dict(samples=24, res=(800, 600)) if args.fast else {}
         if not args.no_stills:
-            print("render:", render.hero(out, **q))
+            print("render:", render.hero(out, azimuth=getattr(mod, "HERO_AZIMUTH", -35),
+                                           elevation=getattr(mod, "HERO_ELEVATION", 18), **q))
             print("render:", render.views(out, **({"samples": 16, "res": (480, 360)} if args.fast else {})))
         if args.turntable:
             print("render:", render.turntable(out))
@@ -58,18 +59,19 @@ def main():
         _, paths, _ = export.bake_and_export(args.model, out, size=512 if args.fast else args.tex)
         print(f"exported at {time.time() - t0:.1f}s")
         if not args.no_render:
-            print("render:", check_export(paths["glb"], out, getattr(mod, "LIGHTING", "studio"), args.fast))
+            print("render:", check_export(paths["glb"], out, mod, args.fast))
 
 
-def check_export(glb, out, preset, fast):
+def check_export(glb, out, mod, fast):
     """Re-import the GLB into an empty scene and render it: this is what a
     game engine will see (baked textures only, no Blender shader nodes)."""
     scene.reset()
     bpy.ops.import_scene.gltf(filepath=glb)
-    lighting.studio(preset)
+    lighting.studio(getattr(mod, "LIGHTING", "studio"))
     q = dict(samples=24, res=(800, 600)) if fast else dict(samples=96, res=(1200, 900))
     render.setup_cycles(**q)
-    cam = render.frame(render.camera())
+    cam = render.frame(render.camera(), getattr(mod, "HERO_AZIMUTH", -35),
+                       getattr(mod, "HERO_ELEVATION", 18))
     return render.still(os.path.join(out, "export_check.png"), cam)
 
 

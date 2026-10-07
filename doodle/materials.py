@@ -143,9 +143,14 @@ def wood(name, light=(0.45, 0.28, 0.14), dark=(0.2, 0.11, 0.05), scale=3.0):
 # --- the hero material: painted metal with edge wear + grime ---------------
 
 def painted_metal(name, paint=(0.55, 0.32, 0.08), metal_color=(0.6, 0.6, 0.62),
-                  wear=0.5, grime=0.5, paint_roughness=0.45):
+                  wear=0.5, grime=0.5, paint_roughness=0.45, bands=None, band_top=1.0):
     """Painted steel: paint chips off sharp edges revealing bare metal,
-    dirt collects in crevices (AO). `wear`/`grime` in 0..1."""
+    dirt collects in crevices (AO). `wear`/`grime` in 0..1.
+
+    bands: optional livery by object-space height, e.g.
+        [(0.0, red), (1.3, yellow), (1.8, red)] with band_top=3.1
+    means red from z=0, yellow from z=1.3, red again from z=1.8 (meters).
+    Object origin must sit at ground level for heights to line up."""
     mat, nt, b = _new(name)
     L = nt.links
 
@@ -195,12 +200,30 @@ def painted_metal(name, paint=(0.55, 0.32, 0.08), metal_color=(0.6, 0.6, 0.62),
     paint_var = _noise(nt, scale=6, detail=4)
     paint_col = _ramp(nt, paint_var.outputs["Fac"],
                       [(0.3, tuple(c * 0.85 for c in paint)), (0.7, paint)])
+    if bands:
+        tc = nt.nodes.new("ShaderNodeTexCoord")
+        sep = nt.nodes.new("ShaderNodeSeparateXYZ")
+        L.new(tc.outputs["Object"], sep.inputs["Vector"])
+        norm = nt.nodes.new("ShaderNodeMath")
+        norm.operation = "DIVIDE"
+        norm.inputs[1].default_value = band_top
+        L.new(sep.outputs["Z"], norm.inputs[0])
+        band = _ramp(nt, norm.outputs["Value"], [(z / band_top, c) for z, c in bands])
+        band.color_ramp.interpolation = "CONSTANT"
+        shade = _ramp(nt, paint_var.outputs["Fac"], [(0.3, 0.85), (0.7, 1.0)])
+        var = nt.nodes.new("ShaderNodeMix")
+        var.data_type = "RGBA"
+        var.blend_type = "MULTIPLY"
+        var.inputs["Factor"].default_value = 1.0
+        L.new(band.outputs["Color"], var.inputs["A"])
+        L.new(shade.outputs["Color"], var.inputs["B"])
+        paint_col = var  # downstream reads paint_col.outputs["Color"]
     dirty = nt.nodes.new("ShaderNodeMix")
     dirty.data_type = "RGBA"
     dirty.blend_type = "MULTIPLY"
     dirty.inputs["B"].default_value = (0.25, 0.2, 0.15, 1)
     L.new(grime_mask.outputs["Color"], dirty.inputs["Factor"])
-    L.new(paint_col.outputs["Color"], dirty.inputs["A"])
+    L.new(paint_col.outputs["Result" if bands else "Color"], dirty.inputs["A"])
 
     # Final mixes: paint vs bare metal by wear mask.
     color = nt.nodes.new("ShaderNodeMix")

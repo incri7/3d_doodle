@@ -47,23 +47,31 @@ def camera(name="CAM-main", lens=60):
     return cam
 
 
-def frame(cam, azimuth=-35, elevation=20, margin=1.15):
-    """Place camera on a sphere around the model so it fills the frame.
+def frame(cam, azimuth=-35, elevation=20, margin=1.08):
+    """Aim the camera at the model from (azimuth, elevation) and back off
+    until every bounding-box corner fits the frame. Fits long shapes
+    (vehicles, swords) tightly, unlike a bounding sphere.
     azimuth 0 = looking from -Y (front), positive rotates toward +X."""
     lo, hi = sc.bounds()
     center = (lo + hi) / 2
-    radius = (hi - lo).length / 2
     s = bpy.context.scene
     aspect = s.render.resolution_x / s.render.resolution_y
-    # Sensor fit AUTO: cam.data.angle spans the longer image side; use the shorter.
-    fov = cam.data.angle
-    if aspect >= 1:
-        fov = 2 * math.atan(math.tan(fov / 2) / aspect)
-    dist = radius * margin / math.sin(fov / 2)
+    # Sensor fit AUTO: cam.data.angle spans the longer image side.
+    half = cam.data.angle / 2
+    tan_h, tan_v = (math.tan(half), math.tan(half) / aspect) if aspect >= 1 else \
+        (math.tan(half) * aspect, math.tan(half))
     az, el = math.radians(azimuth), math.radians(elevation)
-    offset = Vector((math.sin(az) * math.cos(el), -math.cos(az) * math.cos(el), math.sin(el)))
-    cam.location = center + offset * dist
-    cam.rotation_euler = (center - cam.location).to_track_quat("-Z", "Y").to_euler()
+    back = Vector((math.sin(az) * math.cos(el), -math.cos(az) * math.cos(el), math.sin(el)))
+    fwd = -back
+    right = fwd.cross(Vector((0, 0, 1))).normalized()
+    up = right.cross(fwd)
+    dist = 0.0
+    for c in [Vector((x, y, z)) for x in (lo.x, hi.x) for y in (lo.y, hi.y) for z in (lo.z, hi.z)]:
+        p = c - center
+        depth = p.dot(fwd)  # positive = farther from the camera than center
+        dist = max(dist, abs(p.dot(right)) / tan_h - depth, abs(p.dot(up)) / tan_v - depth)
+    cam.location = center + back * dist * margin
+    cam.rotation_euler = fwd.to_track_quat("-Z", "Y").to_euler()
     return cam
 
 
