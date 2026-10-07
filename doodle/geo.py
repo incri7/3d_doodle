@@ -163,6 +163,14 @@ def tube(name, points, radius=0.02, location=(0, 0, 0), resolution=8, coll=None)
     return _link(obj, coll)
 
 
+def part(obj, name, pivot):
+    """Tag `obj` as belonging to a moving part (e.g. "wheel_fl"). export keeps
+    each part as its own object with its origin at `pivot` (world coords)."""
+    obj["doodle_part"] = name
+    obj["doodle_pivot"] = tuple(pivot)
+    return obj
+
+
 def apply_transform(obj):
     """Bake location/rotation/scale into the mesh (object becomes identity)."""
     # matrix_basis is built from loc/rot/scale directly; matrix_world would be

@@ -78,6 +78,7 @@ def build():
     _wheels(mats)
     _roof(mats)
     _interior(mats)
+    _tag_moving_parts()
 
 
 # --- placement helpers ---------------------------------------------------------
@@ -683,3 +684,17 @@ def _interior(m):
         M.assign(step, m["floor"])
         nose = geo.box("GEO-step_nosing", (0.55 - k * 0.15, 0.03, 0.02), (hw - 0.3 - k * 0.07, YF + 0.56, z + 0.03))
         M.assign(nose, m["yellow"])
+
+
+def _tag_moving_parts():
+    """Wheels and the steering wheel export as separate pivoted objects
+    (PART-wheel_fl, PART-steering_wheel, ...) so viewers can animate them."""
+    import bpy
+    for o in bpy.data.objects:
+        n = o.name
+        if n.startswith("GEO-wheel_"):
+            key = n.split("_")[1]                    # fl, fr, ril, rol, rir, ror
+            tyre = bpy.data.objects[f"GEO-wheel_{key}_tyre"]
+            geo.part(o, f"wheel_{key}", tyre.location)
+        elif n.startswith("GEO-steering_wheel"):
+            geo.part(o, "steering_wheel", o.location)

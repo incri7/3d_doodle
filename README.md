@@ -62,12 +62,17 @@ bash setup.sh                                  # installs Blender 5.2 as a Pytho
 ## Web viewer
 
 `web/` is a small Three.js driving sandbox for the Agni coach on a Nepali
-hill road. Drive with W/A/S/D or the arrow keys (Space handbrake, H horn,
-L headlights) and switch between ten game cameras with C or 1–0:
+hill road. Drive with W/A/S/D or the arrow keys (Space handbrake, hold H
+for the air horn, J for the musical pressure horn, L headlights) and switch between ten game cameras with C or 1–0:
 chase, far chase, driver (first person, with live side mirrors), bumper,
 second person, wheel, passenger, bird's eye, TV roadside cameras and free
 orbit. A rear-view mirror inset can be toggled with M, hold B to look back,
-and drag to look around. Touch screens get on-screen pedals.
+and drag to look around. Touch screens get on-screen pedals. The road wheels
+roll and the front pair steer, and the steering wheel turns with your input.
+
+Moving parts: tag objects with `geo.part(obj, "wheel_fl", pivot)` in a model;
+`export.bake_and_export()` bakes everything into one atlas, then splits each
+part into its own `PART-<name>` object with its origin at the pivot.
 
 ```bash
 python3 -m http.server 8000 -d web
@@ -82,7 +87,8 @@ Regenerate it after rebuilding the bus:
 
 ```bash
 npx @gltf-transform/cli optimize output/agni_bus/agni_bus.glb /tmp/agni_web.glb \
-  --compress quantize --texture-compress webp --texture-size 2048 --simplify false
+  --compress quantize --texture-compress webp --texture-size 2048 --simplify false \
+  --join false --flatten false   # keep the PART- nodes separate
 base64 -w0 /tmp/agni_web.glb > web/agni_bus.glb.b64.txt
 ```
 

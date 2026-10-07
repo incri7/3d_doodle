@@ -11,6 +11,7 @@ Glass (transmission) materials keep their constant values instead of being
 baked; glTF carries them through KHR_materials_transmission.
 """
 
+import json
 import math
 import os
 
@@ -69,15 +70,26 @@ def _fill_empty_slots(me):
 
 
 def bake_ready_copy(name="GEO-export"):
-    """One joined mesh with all modifiers applied, model objects untouched."""
+    """One joined mesh with all modifiers applied, model objects untouched.
+
+    Objects tagged with geo.part() (wheels, steering wheel, doors...) are
+    remembered per face, so split_parts() can pull them back out as separate
+    pivoted objects after baking (they still share the one texture atlas)."""
     depsgraph = bpy.context.evaluated_depsgraph_get()
     copies = []
+    parts, pivots = ["body"], {}
     for obj in sc.model_objects():
         if obj.hide_render or obj.get("doodle_cutter"):
             continue
         me = bpy.data.meshes.new_from_object(obj.evaluated_get(depsgraph),
                                              preserve_all_data_layers=True, depsgraph=depsgraph)
         _fill_empty_slots(me)
+        part = obj.get("doodle_part", "body")
+        if part not in parts:
+            parts.append(part)
+            pivots[part] = list(obj["doodle_pivot"])
+        attr = me.attributes.new("doodle_part", "INT", "FACE")
+        attr.data.foreach_set("value", [parts.index(part)] * len(me.polygons))
         cp = bpy.data.objects.new(obj.name + "_x", me)
         cp.matrix_world = obj.matrix_world.copy()
         bpy.context.scene.collection.objects.link(cp)
@@ -89,6 +101,8 @@ def bake_ready_copy(name="GEO-export"):
         bpy.ops.object.join()
     joined = bpy.context.view_layer.objects.active
     joined.name = name
+    joined["doodle_parts"] = parts
+    joined["doodle_pivots"] = json.dumps(pivots)
     bpy.ops.object.material_slot_remove_unused()
     bpy.ops.object.transform_apply(location=False, rotation=True, scale=True)
     # Triangulate now so the baked normal map's tangent basis matches what
@@ -249,6 +263,47 @@ def _collapse_materials(obj, baked):
     me.update()
 
 
+def split_parts(obj):
+    """Separate tagged parts (see bake_ready_copy) into their own objects named
+    PART-<name>, each with its origin at the part's pivot so engines can spin
+    or steer it. Returns the list of new objects."""
+    from mathutils import Matrix, Vector
+    parts = list(obj.get("doodle_parts", ["body"]))
+    pivots = json.loads(obj.get("doodle_pivots", "{}"))
+    attr = obj.data.attributes.get("doodle_part")
+    if attr is None or len(parts) < 2:
+        return []
+    ids = [0] * len(obj.data.polygons)
+    attr.data.foreach_get("value", ids)
+    made = []
+    for idx, part in enumerate(parts):
+        if idx == 0 or idx not in ids:
+            continue
+        _select_only([obj], obj)
+        me = obj.data
+        me.polygons.foreach_set("select", [i == idx for i in ids])
+        me.edges.foreach_set("select", [False] * len(me.edges))
+        me.vertices.foreach_set("select", [False] * len(me.vertices))
+        for poly in me.polygons:
+            if poly.select:
+                for v in poly.vertices:
+                    me.vertices[v].select = True
+        bpy.ops.object.mode_set(mode="EDIT")
+        bpy.ops.mesh.select_mode(type="FACE")
+        bpy.ops.mesh.separate(type="SELECTED")
+        bpy.ops.object.mode_set(mode="OBJECT")
+        new = next(o for o in bpy.context.selected_objects if o is not obj)
+        new.name = f"PART-{part}"
+        pivot = Vector(pivots[part])
+        new.data.transform(Matrix.Translation(-pivot))
+        new.location = pivot
+        made.append(new)
+        ids = [0] * len(obj.data.polygons)
+        obj.data.attributes["doodle_part"].data.foreach_get("value", ids)
+    print("parts:", ", ".join(o.name for o in made))
+    return made
+
+
 def bake_and_export(name, out_dir, size=2048, samples=32, formats=("glb", "fbx")):
     """Full pipeline. Writes <out_dir>/<name>.glb/.fbx and textures/*.png."""
     os.makedirs(out_dir, exist_ok=True)
@@ -260,8 +315,10 @@ def bake_and_export(name, out_dir, size=2048, samples=32, formats=("glb", "fbx")
                  for s in obj.material_slots if (b := _bsdf(s.material)) is not None]
     baked = baked_material(images, max(strengths + [1.0]), f"MAT-{name}")
     _collapse_materials(obj, baked)
+    parts = split_parts(obj)
+    _select_only([obj] + parts, obj)
 
-    tris = sum(len(p.vertices) - 2 for p in obj.data.polygons)
+    tris = sum(len(p.vertices) - 2 for o in [obj] + parts for p in o.data.polygons)
     paths = {}
     if "glb" in formats:
         paths["glb"] = os.path.join(out_dir, f"{name}.glb")

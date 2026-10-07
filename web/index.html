@@ -75,6 +75,14 @@
   .speedo .bar { grid-column: 1 / -1; height: 3px; margin-top: 6px; background: var(--line); border-radius: 2px; overflow: hidden; }
   .speedo .bar i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--sodium), var(--agni)); }
 
+  .horns { display: flex; flex-direction: column; gap: 6px; }
+  .hornbtn { font: 700 14px/1 var(--display); letter-spacing: .1em; color: var(--fg); cursor: pointer;
+    padding: 12px 14px; border-radius: 6px; touch-action: none; user-select: none; -webkit-user-select: none; }
+  .hornbtn kbd { font: inherit; color: var(--muted); margin-right: 6px; }
+  .hornbtn.air { border-color: var(--sodium); }
+  .hornbtn.on { background: var(--sodium); color: var(--asphalt); }
+  .hornbtn.on kbd { color: rgba(18, 22, 27, .6); }
+  .speedo .gear .horn-lamp.on { color: var(--agni); }
   .touch { position: fixed; inset: auto 14px calc(env(safe-area-inset-bottom, 0px) + 150px); display: flex; justify-content: space-between; pointer-events: none; }
   .touch .pad { display: flex; gap: 10px; pointer-events: auto; }
   .touch button { width: 64px; height: 64px; border-radius: 50%; font: 700 15px/1 var(--display); color: var(--fg);
@@ -127,10 +135,16 @@
         <label class="toggle"><input type="checkbox" id="t-cabin" checked><span>Cabin lights</span></label>
       </div>
     </div>
+    <div class="horns">
+      <button class="hornbtn air plate" id="horn-air" title="Air horn: hold H">
+        <kbd>H</kbd>HORN</button>
+      <button class="hornbtn plate" id="horn-music" title="Musical pressure horn: J">
+        <kbd>J</kbd>♪ MUSIC</button>
+    </div>
     <div class="speedo plate" aria-live="off">
       <div class="kmh" id="kmh">0</div><div class="unit">km/h</div>
       <div class="bar"><i id="speedbar"></i></div>
-      <div class="gear"><span id="g-r">R</span><span id="g-n" class="on">N</span><span id="g-d">D</span><span id="g-hb">· Handbrake</span></div>
+      <div class="gear"><span id="g-r">R</span><span id="g-n" class="on">N</span><span id="g-d">D</span><span id="g-hb">· Handbrake</span><span id="g-horn" class="horn-lamp">· Horn</span></div>
     </div>
   </div>
 </div>
@@ -145,14 +159,16 @@
     <dt>C · 1–0</dt><dd>Next camera · pick a camera</dd>
     <dt>Hold B</dt><dd>Look back</dd>
     <dt>Drag</dt><dd>Look around (orbit in camera 0)</dd>
-    <dt>M · L · H</dt><dd>Mirror · headlights · horn</dd>
+    <dt>Hold H</dt><dd>Air horn (as long as you hold)</dd>
+    <dt>J</dt><dd>Musical pressure horn</dd>
+    <dt>M · L</dt><dd>Mirror · headlights</dd>
   </dl>
   <p>Click the scene first so it receives your keys.</p>
 </div>
 
 <div class="touch" id="touch" hidden>
   <div class="pad"><button data-k="left" aria-label="Steer left">◀</button><button data-k="right" aria-label="Steer right">▶</button></div>
-  <div class="pad"><button class="brk" data-k="brake" aria-label="Brake">BRK</button><button class="gas" data-k="gas" aria-label="Accelerate">GAS</button></div>
+  <div class="pad"><button data-k="horn" aria-label="Horn">HORN</button><button class="brk" data-k="brake" aria-label="Brake">BRK</button><button class="gas" data-k="gas" aria-label="Accelerate">GAS</button></div>
 </div>
 
 <script type="importmap">
@@ -312,10 +328,15 @@ addEventListener('keydown', e => {
   if (n) setCam(n.id);
   if (k === 'm') toggle('t-mirror');
   if (k === 'l') toggle('t-head');
-  if (k === 'h') horn();
+  if (k === 'h') hornOn('key');
+  if (k === 'j') musicHorn();
 });
-addEventListener('keyup', e => keys.delete(e.key.toLowerCase()));
-addEventListener('blur', () => keys.clear());
+addEventListener('keyup', e => {
+  const k = e.key.toLowerCase();
+  keys.delete(k);
+  if (k === 'h') hornOff('key');
+});
+addEventListener('blur', () => { keys.clear(); hornOff('key'); hornOff('touch'); hornOff('button'); });
 function toggle(id) { const el = document.getElementById(id); el.checked = !el.checked; el.dispatchEvent(new Event('change')); }
 
 if (matchMedia('(pointer: coarse)').matches) {
@@ -323,29 +344,129 @@ if (matchMedia('(pointer: coarse)').matches) {
   pad.hidden = false;
   pad.querySelectorAll('button').forEach(b => {
     const k = b.dataset.k;
-    b.addEventListener('pointerdown', e => { touch[k] = true; b.setPointerCapture(e.pointerId); });
-    const up = () => { touch[k] = false; };
+    b.addEventListener('pointerdown', e => {
+      touch[k] = true; b.setPointerCapture(e.pointerId);
+      if (k === 'horn') hornOn('touch');
+    });
+    const up = () => { touch[k] = false; if (k === 'horn') hornOff('touch'); };
     b.addEventListener('pointerup', up); b.addEventListener('pointercancel', up);
   });
 }
 
-// Two-tone bus horn (starts only after a key press, as browsers require).
-let audio = null;
-function horn() {
+// Horns. Browsers only allow sound after a click or key press, which both
+// horn controls are, so the audio context is created on first use.
+let audio = null, hornBus = null;
+function audioCtx() {
+  if (!audio) {
+    audio = new AudioContext();
+    // Shared output: soft clipper for brassy grit, then a gentle low-pass.
+    const shaper = audio.createWaveShaper();
+    const curve = new Float32Array(1024);
+    for (let i = 0; i < 1024; i++) { const x = i / 511.5 - 1; curve[i] = Math.tanh(2.2 * x); }
+    shaper.curve = curve;
+    const lp = audio.createBiquadFilter();
+    lp.type = 'lowpass'; lp.frequency.value = 3200; lp.Q.value = 0.7;
+    hornBus = audio.createGain();
+    hornBus.gain.value = 0.5;
+    hornBus.connect(shaper).connect(lp).connect(audio.destination);
+  }
+  if (audio.state === 'suspended') audio.resume();
+  return audio;
+}
+
+// Air horn: a three-trumpet chord (like a bus/truck air horn) that sounds for
+// as long as any source (key, button, touch) holds it.
+const hornHolders = new Set();
+let air = null;
+const hornLamp = () => document.getElementById('g-horn');
+function hornOn(src) {
+  hornHolders.add(src);
+  document.getElementById('horn-air').classList.add('on');
+  hornLamp().classList.add('on');
+  if (air) return;
   try {
-    audio ??= new AudioContext();
-    const t = audio.currentTime;
-    for (const [f, start] of [[392, 0], [494, 0], [392, 0.28], [494, 0.28]]) {
-      const o = audio.createOscillator(), g = audio.createGain();
-      o.type = 'sawtooth'; o.frequency.value = f;
-      g.gain.setValueAtTime(0, t + start);
-      g.gain.linearRampToValueAtTime(0.06, t + start + 0.02);
-      g.gain.setValueAtTime(0.06, t + start + 0.2);
-      g.gain.linearRampToValueAtTime(0, t + start + 0.24);
-      o.connect(g).connect(audio.destination);
-      o.start(t + start); o.stop(t + start + 0.25);
+    const ctx = audioCtx(), t = ctx.currentTime;
+    const env = ctx.createGain();
+    env.gain.setValueAtTime(0, t);
+    env.gain.linearRampToValueAtTime(0.32, t + 0.035);   // fast "blat" attack
+    env.gain.linearRampToValueAtTime(0.24, t + 0.25);
+    env.connect(hornBus);
+    const lfo = ctx.createOscillator(), lfoGain = ctx.createGain();
+    lfo.frequency.value = 5.5; lfoGain.gain.value = 2.5;  // slight air wobble
+    lfo.connect(lfoGain);
+    const oscs = [lfo];
+    for (const f of [277.2, 349.2, 415.3]) {               // C#4, F4, G#4
+      for (const detune of [-6, 6]) {
+        const o = ctx.createOscillator();
+        o.type = 'sawtooth'; o.frequency.value = f; o.detune.value = detune;
+        lfoGain.connect(o.frequency);
+        const g = ctx.createGain(); g.gain.value = 0.16;
+        o.connect(g).connect(env);
+        oscs.push(o);
+      }
     }
+    oscs.forEach(o => o.start(t));
+    air = { env, oscs };
   } catch { /* no audio available */ }
+}
+function hornOff(src) {
+  hornHolders.delete(src);
+  if (hornHolders.size) return;
+  document.getElementById('horn-air').classList.remove('on');
+  if (!musicPlaying) hornLamp().classList.remove('on');
+  if (!air) return;
+  const t = audio.currentTime;
+  air.env.gain.cancelScheduledValues(t);
+  air.env.gain.setValueAtTime(air.env.gain.value, t);
+  air.env.gain.linearRampToValueAtTime(0, t + 0.12);
+  air.oscs.forEach(o => o.stop(t + 0.15));
+  air = null;
+}
+
+// Musical pressure horn: the bright, melodic horn heard on Nepali and Indian
+// highway buses. A short original tune on a reedy square wave.
+let musicPlaying = false;
+function musicHorn() {
+  if (musicPlaying) return;
+  try {
+    const ctx = audioCtx();
+    const tune = [[659, .13], [784, .13], [880, .13], [784, .13], [659, .13], [587, .13], [659, .34],
+                  [0, .08], [880, .13], [988, .13], [880, .13], [784, .36]];
+    let t = ctx.currentTime + 0.02;
+    const env = ctx.createGain(); env.gain.value = 0; env.connect(hornBus);
+    const o = ctx.createOscillator(); o.type = 'square';
+    const vib = ctx.createOscillator(), vibGain = ctx.createGain();
+    vib.frequency.value = 6.5; vibGain.gain.value = 7; vib.connect(vibGain).connect(o.frequency);
+    o.connect(env);
+    for (const [f, d] of tune) {
+      if (f) {
+        o.frequency.setValueAtTime(f, t);
+        env.gain.setValueAtTime(0, t);
+        env.gain.linearRampToValueAtTime(0.2, t + 0.015);
+        env.gain.setValueAtTime(0.2, t + d - 0.03);
+        env.gain.linearRampToValueAtTime(0, t + d);
+      }
+      t += d;
+    }
+    o.start(); vib.start(); o.stop(t + 0.05); vib.stop(t + 0.05);
+    musicPlaying = true;
+    const btn = document.getElementById('horn-music');
+    btn.classList.add('on'); hornLamp().classList.add('on');
+    o.onended = () => {
+      musicPlaying = false; btn.classList.remove('on');
+      if (!hornHolders.size) hornLamp().classList.remove('on');
+    };
+  } catch { /* no audio available */ }
+}
+
+// On-screen horn buttons: hold the air horn, tap the musical horn.
+{
+  const btn = document.getElementById('horn-air');
+  btn.addEventListener('pointerdown', e => { e.preventDefault(); btn.setPointerCapture(e.pointerId); hornOn('button'); });
+  for (const ev of ['pointerup', 'pointercancel', 'lostpointercapture']) btn.addEventListener(ev, () => hornOff('button'));
+  btn.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.repeat) hornOn('button'); });
+  btn.addEventListener('keyup', e => { if (e.key === 'Enter') hornOff('button'); });
+  document.getElementById('horn-music').addEventListener('click', () => { musicHorn(); canvas.focus(); });
 }
 
 // Free-look: drag in any following camera to look around; it eases back.
@@ -579,6 +700,11 @@ function drive(dt) {
   for (const key of ['r', 'n', 'd']) gears[key].classList.toggle('on', key === g);
   gears.hb.classList.toggle('on', car.handbrake);
 
+  // Roll the wheels with road speed, steer the front pair, turn the steering wheel.
+  wheelSpin = (wheelSpin + car.speed / TYRE_R * dt) % (Math.PI * 2);
+  for (const w of parts.wheels) w.node.rotation.set(wheelSpin, w.front ? car.steer : 0, 0);
+  if (parts.steering) parts.steering.quaternion.setFromAxisAngle(STEER_AXIS, -car.steer * STEER_RATIO);
+
   sun.position.copy(vehicle.position).add(SUN_OFFSET);
   sun.target.position.copy(vehicle.position);
 }
@@ -586,7 +712,11 @@ function drive(dt) {
 // ---------------------------------------------------------------- load
 const loadbar = document.getElementById('loadbar');
 const loaderText = document.getElementById('loader-text');
-window.viewer = { camera, controls, car, vehicle, setCam };  // handy in the console
+window.viewer = { camera, controls, car, vehicle, setCam,   // handy in the console
+  horn: () => ({ air: !!air, music: musicPlaying, audio: audio && audio.state }),
+  parts: () => ({ wheels: parts.wheels.length, steering: !!parts.steering,
+    spin: +wheelSpin.toFixed(2), steer: +car.steer.toFixed(2),
+    fl: parts.wheels.find(w => w.front)?.node.rotation.toArray().slice(0, 2).map(v => +v.toFixed(2)) }) };
 
 // The model ships as base64 text so any static host serves it; decode, then parse.
 const fileLoader = new THREE.FileLoader();
@@ -604,7 +734,18 @@ fileLoader.load('agni_bus.glb.b64.txt', b64 => {
 }, e => { if (e.total) loadbar.style.width = (100 * e.loaded / e.total).toFixed(0) + '%'; }, onError);
 
 const glassMats = [];
+// Moving parts exported as their own nodes (origin at the axle / column).
+const parts = { wheels: [], steering: null };
+const STEER_AXIS = new THREE.Vector3(0, Math.cos(1.1), Math.sin(1.1));  // column tilt
+const TYRE_R = 0.53, STEER_RATIO = 7;
+let wheelSpin = 0;
 function onModel(gltf) {
+  gltf.scene.traverse(o => {
+    if (o.name.startsWith('PART-wheel_')) {
+      o.rotation.order = 'YXZ';                       // steer about Y, then roll about X
+      parts.wheels.push({ node: o, front: /_f[lr]$/.test(o.name) });
+    } else if (o.name === 'PART-steering_wheel') parts.steering = o;
+  });
   gltf.scene.traverse(o => {
     if (!o.isMesh) return;
     o.castShadow = o.receiveShadow = true;
