@@ -45,7 +45,13 @@ def build():
     mats = {
         "paint": M.painted_metal("MAT-white_paint", paint=(0.92, 0.92, 0.9), wear=0.08, grime=0.3,
                                  paint_roughness=0.16, metal_color=(0.7, 0.7, 0.72)),
-        "glass": M.plastic("MAT-tinted_glass", (0.008, 0.01, 0.013), roughness=0.04, coat=1.0),
+        "glass": M.glass("MAT-tinted_glass", (0.24, 0.26, 0.28), roughness=0.03),
+        "interior": M.plastic("MAT-interior_lining", (0.62, 0.56, 0.48), roughness=0.7),
+        "fabric": M.plastic("MAT-seat_velvet", (0.32, 0.03, 0.05), roughness=0.9),
+        "cover": M.plastic("MAT-headrest_cover", (0.92, 0.9, 0.86), roughness=0.85),
+        "curtain": M.plastic("MAT-curtain_orange", (0.88, 0.36, 0.05), roughness=0.9),
+        "floor": M.plastic("MAT-floor", (0.08, 0.08, 0.09), roughness=0.6),
+        "led_blue": M.emissive("MAT-ceiling_led", (0.15, 0.35, 1.0), strength=3.0),
         "black": M.plastic("MAT-black_trim", (0.015, 0.015, 0.015), roughness=0.35),
         "red": M.plastic("MAT-red_graphic", (0.72, 0.02, 0.03), roughness=0.25, coat=0.5),
         "maroon": M.plastic("MAT-maroon_graphic", (0.22, 0.01, 0.015), roughness=0.3, coat=0.5),
@@ -71,6 +77,7 @@ def build():
     _rear(mats)
     _wheels(mats)
     _roof(mats)
+    _interior(mats)
 
 
 # --- placement helpers ---------------------------------------------------------
@@ -201,6 +208,7 @@ def stroke(p0, p1, width):
 # --- body -------------------------------------------------------------------------
 
 def _body(m):
+    import bpy
     hw = W / 2
     prof = geo.rounded_rect_profile(W, Z0, Z1, radius=0.38, steps=8)
     # Add vertices at the windshield line so the front can rake above it.
@@ -238,9 +246,36 @@ def _body(m):
         arch = geo.cylinder("CUT-arch", TYRE_R + 0.1, W + 1, 40, (0, y, TYRE_R + 0.02))
         arch.rotation_euler = (0, PI / 2, 0)
         geo.cut(body, arch, material=m["black"])
-    geo.finish_hard_surface(body, bevel_width=0.008, segments=2, angle=40)
     M.assign(body, m["paint"])
-    BODY.append(body)
+    body.data.materials.append(m["interior"])
+
+    # Glass and graphics are projected onto the closed outer skin: a hidden
+    # copy taken before the window openings are cut.
+    target = body.copy()
+    target.name = "CUT-projection_skin"
+    bpy.context.scene.collection.objects.link(target)
+    target.hide_render = True
+    target.display_type = "WIRE"
+    target["doodle_cutter"] = True
+    BODY.append(target)
+
+    # Hollow shell (inner faces use the lining material), then real openings.
+    shell = body.modifiers.new("Shell", "SOLIDIFY")
+    shell.thickness = 0.04
+    shell.offset = -1.0
+    shell.material_offset = 1
+    shell.material_offset_rim = 1
+    for side in (-1, 1):
+        y0 = YF + (1.3 if side > 0 else 0.62) + 0.05
+        cut = geo.box("CUT-window_band", (0.5, YB - 0.25 - y0, BAND_Z1 - BAND_Z0 - 0.08),
+                      (side * W / 2, (y0 + YB - 0.25) / 2, (BAND_Z0 + BAND_Z1) / 2))
+        geo.cut(body, cut)
+    door = geo.box("CUT-door", (0.5, 0.62, BAND_Z1 - 0.7), (W / 2, YF + 0.86, (0.66 + BAND_Z1 - 0.04) / 2))
+    geo.cut(body, door)
+    zt = Z1 - 0.3
+    ws = geo.box("CUT-windshield", (2.4, 1.0, zt - WS_Z0 - 0.14), (0, YF - 0.05, (WS_Z0 + 0.14 + zt) / 2))
+    geo.cut(body, ws)
+    geo.finish_hard_surface(body, bevel_width=0.008, segments=2, angle=40)
     # Arch cut faces got MAT-black_trim (liner); body keeps white in slot 0.
 
 
@@ -254,7 +289,8 @@ def _glazing(m):
     on_side("GEO-door", [rounded_rect(YF + 0.5, 0.6, YF + 1.22, BAND_Z1, 0.05)], 1, g, depth=0.008)
     # Windshield: wraps around the rounded front corners, black frame border.
     zt = Z1 - 0.2
-    on_front("GEO-windshield_frame", [rounded_rect(-1.29, WS_Z0 + 0.02, 1.29, zt, 0.12)], blk,
+    on_front("GEO-windshield_frame", [rounded_rect(-1.29, WS_Z0 + 0.02, 1.29, zt, 0.12),
+                                       rounded_rect(-1.24, WS_Z0 + 0.1, 1.24, zt - 0.06, 0.1)], blk,
              depth=0.008)
     on_front("GEO-windshield", [rounded_rect(-1.24, WS_Z0 + 0.1, 1.24, zt - 0.06, 0.1)], g,
              depth=0.008, lift=0.004)
@@ -271,10 +307,6 @@ def _front(m):
                tracking=0.12)
     on_front("GEO-ws_rule", [rect(-0.95, zt - 0.47, 0.95, zt - 0.44)], m["orange"], lift=0.008,
              z_hint=zt - 0.45)
-    # Orange dashboard curtains seen through the lower windshield.
-    curtain = [(x, WS_Z0 + 0.42 - 0.05 * math.cos(x * 9)) for x in [i / 20 * 2.2 - 1.1 for i in range(21)]]
-    curtain = [(-1.1, WS_Z0 + 0.27)] + curtain + [(1.1, WS_Z0 + 0.27)]
-    on_front("GEO-dash_curtain", [curtain], m["orange"], lift=0.006, z_hint=WS_Z0 + 0.35)
     # Route band at the bottom of the windshield.
     zb = WS_Z0 + 0.18
     on_front("GEO-ws_route_band", [rect(-1.12, WS_Z0 + 0.1, 1.12, WS_Z0 + 0.27)], m["black"],
@@ -555,3 +587,99 @@ def _roof(m):
     hatch = geo.box("GEO-roof_hatch", (0.8, 0.8, 0.08), (0, 2.2, Z1 + 0.02))
     geo.finish_hard_surface(hatch, 0.02)
     M.assign(hatch, m["paint"])
+
+
+# --- interior (seen through the glass) ------------------------------------------------
+
+FLOOR = 1.2  # high-deck coach floor height
+
+
+def _soft_box(name, size, loc, mat, rot=(0, 0, 0), bevel=0.04):
+    o = geo.box(name, size, loc)
+    o.rotation_euler = rot
+    geo.bevel(o, bevel, 3, 30, harden=False)
+    geo.smooth(o, 60)
+    return M.assign(o, mat)
+
+
+def _seat(name, x, y, width, m):
+    """Sofa seat facing forward (-Y): velvet cushion and backrest, white
+    headrest cover (a Nepali bus staple), armrests, pedestal."""
+    _soft_box(f"GEO-{name}_base", (width - 0.12, 0.4, 0.32), (x, y, FLOOR + 0.18), m["floor"], bevel=0.02)
+    _soft_box(f"GEO-{name}_cushion", (width, 0.56, 0.15), (x, y - 0.02, FLOOR + 0.42), m["fabric"])
+    back_y, back_z = y + 0.27, FLOOR + 0.86
+    _soft_box(f"GEO-{name}_back", (width, 0.15, 0.78), (x, back_y, back_z), m["fabric"], rot=(-0.2, 0, 0))
+    _soft_box(f"GEO-{name}_cover", (width - 0.08, 0.17, 0.26), (x, back_y + 0.06, back_z + 0.3),
+              m["cover"], rot=(-0.2, 0, 0), bevel=0.03)
+    for dx in (-width / 2, width / 2):
+        _soft_box(f"GEO-{name}_arm", (0.06, 0.48, 0.05), (x + dx, y, FLOOR + 0.66), m["black"], bevel=0.02)
+
+
+def _interior(m):
+    hw = W / 2 - 0.04  # inner wall
+    floor = geo.box("GEO-floor", (W - 0.1, L - 0.6, 0.05), (0, 0, FLOOR - 0.025))
+    M.assign(floor, m["floor"])
+    # 2+1 sofa layout: doubles on the driver's side (-X), singles on the door side.
+    y = YF + 1.95
+    i = 0
+    while y < YB - 0.6:
+        _seat(f"seat_{i}_d", -(hw - 0.08 - 0.5), y, 1.0, m)
+        _seat(f"seat_{i}_s", hw - 0.08 - 0.28, y, 0.56, m)
+        y += 0.95
+        i += 1
+    # Pleated orange curtains tied back between windows, valance on top.
+    for side in (-1, 1):
+        y0 = YF + (1.35 if side > 0 else 0.7)
+        yy = y0
+        while yy < YB - 0.3:
+            c = geo.cylinder("GEO-curtain_tie", 0.11, BAND_Z1 - BAND_Z0 - 0.1, 16,
+                             (side * (hw - 0.1), yy, (BAND_Z0 + BAND_Z1) / 2 - 0.02))
+            c.scale = (0.55, 1.0, 1.0)
+            geo.smooth(c)
+            M.assign(c, m["curtain"])
+            yy += 1.15
+        val = geo.box("GEO-valance", (0.03, YB - 0.3 - y0, 0.16),
+                      (side * (hw - 0.05), (y0 + YB - 0.3) / 2, BAND_Z1 - 0.12))
+        M.assign(val, m["curtain"])
+        rack = geo.box("GEO-luggage_rack", (0.38, L - 2.6, 0.04), (side * (hw - 0.22), 0.4, BAND_Z1 + 0.06))
+        geo.finish_hard_surface(rack, 0.01)
+        M.assign(rack, m["black"])
+        led = geo.box("GEO-ceiling_led", (0.05, L - 2.4, 0.012), (side * 0.42, 0.4, Z1 - 0.07))
+        M.assign(led, m["led_blue"])
+    # Cabin light (render only; lights don't export): daylight spill inside.
+    import bpy
+    lamp = bpy.data.lights.new("LGT-cabin", "AREA")
+    lamp.shape = "RECTANGLE"
+    lamp.size, lamp.size_y = 1.2, L - 2.0
+    lamp.energy = 900
+    lamp.color = (1.0, 0.93, 0.85)
+    lo = bpy.data.objects.new("LGT-cabin", lamp)
+    lo.location = (0, 0.3, Z1 - 0.12)
+    bpy.context.scene.collection.objects.link(lo)
+    # Driver area (right-hand drive: driver on -X). Dashboard with fringed cloth.
+    dash_y = YF + 0.5
+    dash = geo.box("GEO-dashboard", (W - 0.25, 0.5, 0.38), (0, dash_y, FLOOR + 0.35))
+    geo.finish_hard_surface(dash, 0.04)
+    M.assign(dash, m["floor"])
+    cloth = geo.box("GEO-dash_cloth", (W - 0.3, 0.52, 0.03), (0, dash_y, FLOOR + 0.555))
+    M.assign(cloth, m["curtain"])
+    for k in range(40):  # fringe
+        fx = -(W - 0.35) / 2 + k * (W - 0.35) / 39
+        f = geo.box("GEO-fringe", (0.02, 0.01, 0.07), (fx, dash_y - 0.265, FLOOR + 0.51))
+        M.assign(f, m["gold"])
+    valance = geo.box("GEO-ws_valance", (W - 0.3, 0.03, 0.18), (0, front_y(Z1 - 0.45) + 0.12, Z1 - 0.45))
+    M.assign(valance, m["curtain"])
+    wheel = geo.torus("GEO-steering_wheel", 0.24, 0.025, 32, 8, (-0.62, YF + 0.95, FLOOR + 0.78))
+    wheel.rotation_euler = (1.1, 0, 0)
+    M.assign(wheel, m["black"])
+    col = geo.cylinder("GEO-steering_column", 0.035, 0.45, 12, (-0.62, YF + 0.82, FLOOR + 0.6))
+    col.rotation_euler = (0.5, 0, 0)
+    M.assign(col, m["black"])
+    _seat("driver_seat", -0.62, YF + 1.35, 0.55, m)
+    # Entry steps up from the door (+X) to the deck.
+    for k, z in enumerate((0.72, 0.95)):
+        step = geo.box("GEO-door_step", (0.55 - k * 0.15, 0.62, 0.05), (hw - 0.3 - k * 0.07, YF + 0.86, z))
+        geo.finish_hard_surface(step, 0.01)
+        M.assign(step, m["floor"])
+        nose = geo.box("GEO-step_nosing", (0.55 - k * 0.15, 0.03, 0.02), (hw - 0.3 - k * 0.07, YF + 0.56, z + 0.03))
+        M.assign(nose, m["yellow"])
