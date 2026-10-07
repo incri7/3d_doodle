@@ -1396,6 +1396,20 @@ const composerRT = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType
 const composer = new EffectComposer(renderer, composerRT);
 const renderPass = new RenderPass(scene, null);
 composer.addPass(renderPass);
+// Guard: a tiny, very sharp specular highlight (sun on lacquer or glass) can
+// overflow the half-float buffer on real GPUs; bloom then smears that one bad
+// pixel into a flickering black block. Replace NaN/Inf and clamp the peak.
+const sanitize = new ShaderPass({
+  uniforms: { tDiffuse: { value: null } },
+  vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+  fragmentShader: `uniform sampler2D tDiffuse; varying vec2 vUv;
+    void main(){ vec4 c = texture2D(tDiffuse, vUv);
+      vec3 v = c.rgb;
+      bool bad = !(v.r == v.r && v.g == v.g && v.b == v.b) || any(isinf(v)) || any(isnan(v));
+      v = bad ? vec3(0.0) : clamp(v, 0.0, 48.0);
+      gl_FragColor = vec4(v, 1.0); }`,
+});
+composer.addPass(sanitize);
 const bloomPass = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.25, 0.4, 3.2);
 composer.addPass(bloomPass);
 composer.addPass(new OutputPass());
@@ -1609,14 +1623,15 @@ function upgradeBusMaterial(m) {
     roughness: m.roughness, metalness: m.metalness, roughnessMap: m.roughnessMap, metalnessMap: m.metalnessMap,
     emissive: m.emissive, emissiveMap: m.emissiveMap, emissiveIntensity: m.emissiveIntensity * 1.6,
     aoMap: m.aoMap, side: m.side, vertexColors: m.vertexColors,
-    clearcoat: 0.85, clearcoatRoughness: 0.06, envMapIntensity: 1.0,
+    clearcoat: 0.8, clearcoatRoughness: 0.14, envMapIntensity: 1.0,
   };
   for (const k in params) if (params[k] == null) delete params[k];
   const pm = new THREE.MeshPhysicalMaterial(params);
   pm.onBeforeCompile = sh => {
     sh.fragmentShader = sh.fragmentShader
       .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\n\tfloat coatMask = 1.0 - smoothstep(0.28, 0.5, roughnessFactor);')
-      .replace('#include <lights_physical_fragment>', THREE.ShaderChunk.lights_physical_fragment.replace('material.clearcoat = clearcoat;', 'material.clearcoat = clearcoat * coatMask;'));
+      .replace('#include <lights_physical_fragment>', THREE.ShaderChunk.lights_physical_fragment.replace('material.clearcoat = clearcoat;', 'material.clearcoat = clearcoat * coatMask;'))
+      .replace('#include <dithering_fragment>', '#include <dithering_fragment>\n\tgl_FragColor.rgb = clamp(gl_FragColor.rgb, 0.0, 48.0);');
   };
   pm.customProgramCacheKey = () => 'bus-coat';
   return pm;
@@ -1985,7 +2000,7 @@ function onModel(gltf) {
       o.material = upgraded.get(m);
     }
     if (m && m.transmission > 0) {
-      m.thickness = 0.01; m.envMapIntensity = 1.5; m.roughness = Math.min(m.roughness, 0.04); o.castShadow = false;
+      m.thickness = 0.01; m.envMapIntensity = 1.5; m.roughness = Math.max(0.08, Math.min(m.roughness, 0.12)); o.castShadow = false;
       m.userData.tint = m.color.clone();
       glassMats.push(m);
     }
