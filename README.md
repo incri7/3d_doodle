@@ -117,10 +117,10 @@ part into its own `PART-<name>` object with its origin at the pivot.
 ```bash
 python3 -m http.server 8000 -d web
 # then open http://localhost:8000              (driving sandbox)
-#        or http://localhost:8000/showroom.html (showroom)
+#        or http://localhost:8000/main.html (showroom)
 ```
 
-Showroom (`web/showroom.html`): the coach on a slowly turning platform in a
+Showroom (`web/main.html`): the coach on a slowly turning platform in a
 dark studio with a polished, reflective floor, key and rim spotlights and
 overhead light strips. Drag to orbit, scroll or pinch to zoom; preset views
 (front ¾, side, rear ¾, top, low), turntable on/off (Space), lamps (L) and
