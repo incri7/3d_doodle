@@ -61,9 +61,13 @@ bash setup.sh                                  # installs Blender 5.2 as a Pytho
 
 ## Web viewer
 
-`web/` is a self-contained Three.js viewer for the Agni coach: orbit and
-zoom, preset views (front, door side, driver side, rear, roof, inside the
-cabin), turntable, cabin lights and headlights.
+`web/` is a small Three.js driving sandbox for the Agni coach on a Nepali
+hill road. Drive with W/A/S/D or the arrow keys (Space handbrake, H horn,
+L headlights) and switch between ten game cameras with C or 1–0:
+chase, far chase, driver (first person, with live side mirrors), bumper,
+second person, wheel, passenger, bird's eye, TV roadside cameras and free
+orbit. A rear-view mirror inset can be toggled with M, hold B to look back,
+and drag to look around. Touch screens get on-screen pedals.
 
 ```bash
 python3 -m http.server 8000 -d web

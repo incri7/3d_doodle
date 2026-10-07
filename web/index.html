@@ -5,127 +5,154 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;700&family=Mukta:wght@400;600;800&display=swap">
 <style>
-  /* Layout: full-bleed 3D stage (a bus park at dusk) with a route-board nameplate
-     top-left, a spec plate bottom-right, and a dock of view chips along the bottom. */
+  /* Layout: full-bleed 3D road scene. Route board top-left, camera badge + help
+     top-right, camera dock bottom-left, speedometer bottom-right; mirrors are
+     drawn inside the canvas. Touch pedals appear on touch screens. */
   :root {
-    --asphalt: #12161b;      /* page / sky at dusk */
-    --plate: rgba(20, 25, 31, 0.82);
-    --line: rgba(236, 233, 226, 0.14);
+    --asphalt: #12161b;
+    --plate: rgba(18, 22, 28, 0.84);
+    --line: rgba(236, 233, 226, 0.16);
     --fg: #ece9e2;
     --muted: #9ba5af;
     --agni: #e0322f;         /* Agni livery red */
-    --sodium: #f2b233;       /* bay markings, HEATER box yellow */
+    --sodium: #f2b233;       /* road paint / HEATER box yellow */
     --display: "Oswald", "Arial Narrow", "Roboto Condensed", sans-serif;
     --body: "Mukta", "Noto Sans Devanagari", system-ui, sans-serif;
     color-scheme: dark;
   }
   [hidden] { display: none !important; }
   html, body { height: 100%; }
-  body {
-    margin: 0;
-    background: var(--asphalt);
-    color: var(--fg);
-    font: 15px/1.45 var(--body);
-    overflow: hidden;
-  }
-  #stage { position: fixed; inset: 0; display: block; width: 100%; height: 100%; touch-action: none; }
+  body { margin: 0; background: var(--asphalt); color: var(--fg); font: 15px/1.45 var(--body); overflow: hidden; }
+  #stage { position: fixed; inset: 0; display: block; width: 100%; height: 100%; touch-action: none; outline: none; }
 
-  .hud { position: fixed; inset: 0; pointer-events: none; display: grid;
-    grid-template-rows: auto 1fr auto; padding: calc(env(safe-area-inset-top, 0px) + 16px) 16px calc(env(safe-area-inset-bottom, 0px) + 16px); gap: 12px; }
-  .top { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; pointer-events: none; }
-  .top > * { pointer-events: auto; }
+  .hud { position: fixed; inset: 0; pointer-events: none; display: grid; grid-template-rows: auto 1fr auto;
+    padding: calc(env(safe-area-inset-top, 0px) + 14px) 14px calc(env(safe-area-inset-bottom, 0px) + 14px); gap: 10px; }
+  .row { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; pointer-events: none; }
+  .row.top { align-items: flex-start; }
+  .row.bottom { align-items: flex-end; }
+  .row > * { pointer-events: auto; }
+  .plate { background: var(--plate); border: 1px solid var(--line); border-radius: 6px; backdrop-filter: blur(6px); }
 
-  .board { background: var(--plate); border: 1px solid var(--line); border-radius: 6px; padding: 10px 14px 11px;
-    backdrop-filter: blur(6px); max-width: min(420px, 100%); }
-  .board .eyebrow { font: 600 11px/1 var(--body); letter-spacing: .14em; text-transform: uppercase; color: var(--sodium); }
-  .board h1 { margin: 6px 0 2px; font: 700 clamp(26px, 5vw, 36px)/1 var(--display); letter-spacing: .04em; text-wrap: balance; }
+  .board { padding: 8px 12px 9px; max-width: min(380px, 100%); }
+  .board .eyebrow { font: 600 10px/1 var(--body); letter-spacing: .14em; text-transform: uppercase; color: var(--sodium); }
+  .board h1 { margin: 5px 0 1px; font: 700 26px/1 var(--display); letter-spacing: .04em; }
   .board h1 span { color: var(--agni); }
-  .route { display: flex; align-items: center; gap: 8px; font: 600 17px/1.2 var(--body); flex-wrap: wrap; }
-  .route .arrow { color: var(--muted); font-family: var(--display); }
-  .route small { color: var(--muted); font-weight: 400; font-size: 13px; }
+  .route { font: 600 15px/1.2 var(--body); }
+  .route .arrow { color: var(--muted); font-family: var(--display); padding-inline: 4px; }
 
-  .hint { font-size: 13px; color: var(--muted); background: var(--plate); border: 1px solid var(--line);
-    border-radius: 999px; padding: 6px 12px; }
+  .camstate { display: flex; gap: 8px; align-items: center; }
+  .cam-badge { padding: 7px 12px; font: 500 14px/1 var(--display); letter-spacing: .08em; text-transform: uppercase; }
+  .cam-badge b { color: var(--sodium); font-weight: 700; margin-right: 6px; }
+  .iconbtn { font: 700 15px/1 var(--display); width: 34px; height: 34px; color: var(--fg); cursor: pointer; }
 
-  .bottom { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; flex-wrap: wrap; pointer-events: none; }
-  .bottom > * { pointer-events: auto; }
-  .dock { display: flex; flex-direction: column; gap: 8px; min-width: 0; max-width: 100%; }
-  .chips { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; padding-bottom: 2px; }
+  .help { position: fixed; top: calc(env(safe-area-inset-top, 0px) + 60px); right: 14px; width: min(330px, calc(100% - 28px));
+    padding: 12px 14px; pointer-events: auto; font-size: 14px; }
+  .help h2 { margin: 0 0 6px; font: 700 15px/1 var(--display); letter-spacing: .08em; text-transform: uppercase; }
+  .help dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; }
+  .help dt { font: 500 13px/1.5 var(--display); letter-spacing: .04em; color: var(--sodium); white-space: nowrap; }
+  .help dd { margin: 0; color: var(--fg); }
+  .help p { margin: 8px 0 0; color: var(--muted); font-size: 13px; }
+
+  .dock { display: flex; flex-direction: column; gap: 7px; min-width: 0; flex: 1 1 420px; }
+  .chips { display: flex; gap: 5px; overflow-x: auto; scrollbar-width: none; padding-bottom: 2px; }
   .chips::-webkit-scrollbar { display: none; }
-  .chip { font: 500 14px/1 var(--display); letter-spacing: .06em; text-transform: uppercase; color: var(--fg);
-    background: var(--plate); border: 1px solid var(--line); border-radius: 4px; padding: 10px 12px; cursor: pointer;
-    white-space: nowrap; transition: border-color .15s, color .15s, background .15s; }
+  .chip { font: 500 13px/1 var(--display); letter-spacing: .06em; text-transform: uppercase; color: var(--fg);
+    background: var(--plate); border: 1px solid var(--line); border-radius: 4px; padding: 9px 10px; cursor: pointer; white-space: nowrap; }
+  .chip kbd { font: inherit; color: var(--muted); margin-right: 5px; }
   .chip:hover { border-color: var(--sodium); }
   .chip[aria-pressed="true"] { background: var(--sodium); color: var(--asphalt); border-color: var(--sodium); }
-  .chip:focus-visible, .toggle input:focus-visible + span { outline: 2px solid var(--sodium); outline-offset: 2px; }
+  .chip[aria-pressed="true"] kbd { color: rgba(18, 22, 27, .6); }
+  .chip:focus-visible, .iconbtn:focus-visible, .toggle input:focus-visible + span { outline: 2px solid var(--sodium); outline-offset: 2px; }
   .toggles { display: flex; gap: 14px; flex-wrap: wrap; font-size: 14px; color: var(--muted); }
-  .toggle { display: inline-flex; align-items: center; gap: 7px; cursor: pointer; user-select: none; }
-  .toggle input { accent-color: var(--agni); width: 16px; height: 16px; margin: 0; }
+  .toggle { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; }
+  .toggle input { accent-color: var(--agni); width: 15px; height: 15px; margin: 0; }
 
-  .spec { background: var(--plate); border: 1px solid var(--line); border-radius: 6px; padding: 10px 14px;
-    display: grid; grid-template-columns: auto auto; gap: 3px 16px; font-size: 13px; }
-  .spec dt { color: var(--muted); }
-  .spec dd { margin: 0; text-align: right; font: 500 14px/1.45 var(--display); letter-spacing: .03em; font-variant-numeric: tabular-nums; }
+  .speedo { padding: 8px 14px 9px; display: grid; grid-template-columns: auto auto; align-items: end; gap: 0 12px; min-width: 150px; }
+  .speedo .kmh { font: 700 46px/0.9 var(--display); font-variant-numeric: tabular-nums; letter-spacing: .02em; text-align: right; }
+  .speedo .unit { font: 500 12px/1 var(--display); letter-spacing: .12em; color: var(--muted); text-transform: uppercase; }
+  .speedo .gear { grid-column: 1 / -1; display: flex; gap: 8px; margin-top: 6px; font: 500 13px/1 var(--display); letter-spacing: .08em; color: var(--muted); }
+  .speedo .gear .on { color: var(--sodium); }
+  .speedo .bar { grid-column: 1 / -1; height: 3px; margin-top: 6px; background: var(--line); border-radius: 2px; overflow: hidden; }
+  .speedo .bar i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--sodium), var(--agni)); }
+
+  .touch { position: fixed; inset: auto 14px calc(env(safe-area-inset-bottom, 0px) + 150px); display: flex; justify-content: space-between; pointer-events: none; }
+  .touch .pad { display: flex; gap: 10px; pointer-events: auto; }
+  .touch button { width: 64px; height: 64px; border-radius: 50%; font: 700 15px/1 var(--display); color: var(--fg);
+    background: var(--plate); border: 1px solid var(--line); touch-action: none; user-select: none; -webkit-user-select: none; }
+  .touch button.gas { border-color: var(--sodium); }
+  .touch button.brk { border-color: var(--agni); }
 
   .loader { position: fixed; inset: 0; display: grid; place-items: center; pointer-events: none; }
   .loader-box { width: min(320px, calc(100% - 32px)); display: grid; gap: 8px; text-align: center; }
   .loader-box p { margin: 0; font: 500 14px/1 var(--display); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
-  .bar { height: 4px; border-radius: 2px; background: var(--line); overflow: hidden; }
-  .bar i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--agni), var(--sodium)); transition: width .2s; }
+  .loadbar { height: 4px; border-radius: 2px; background: var(--line); overflow: hidden; }
+  .loadbar i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--agni), var(--sodium)); transition: width .2s; }
   .error { color: var(--fg); background: var(--plate); border: 1px solid var(--agni); border-radius: 6px; padding: 12px 14px; font-size: 14px; }
 
-  @media (max-width: 620px) {
-    .hint { display: none; }
-    .spec { display: none; }
-    .board h1 { font-size: 26px; }
+  @media (max-width: 640px) {
+    .board h1 { font-size: 21px; }
+    .route { font-size: 13px; }
+    .speedo .kmh { font-size: 36px; }
   }
 </style>
 
-<canvas id="stage" aria-label="3D view of the Agni Express bus"></canvas>
+<canvas id="stage" tabindex="0" aria-label="3D driving view of the Agni Express bus"></canvas>
 
 <div class="loader" id="loader">
   <div class="loader-box">
-    <p id="loader-text">Bringing the bus into the bay…</p>
-    <div class="bar"><i id="bar"></i></div>
+    <p id="loader-text">Bringing the bus onto the road…</p>
+    <div class="loadbar"><i id="loadbar"></i></div>
   </div>
 </div>
 
 <div class="hud">
-  <div class="top">
-    <div class="board">
+  <div class="row top">
+    <div class="board plate">
       <div class="eyebrow">Super Agni · A/C VIP Sofa</div>
       <h1>AGNI <span>EXPRESS</span></h1>
-      <div class="route">काठमाण्डौ <span class="arrow">→</span> काँकडभिट्टा <small>Kathmandu to Kakarbhitta</small></div>
+      <div class="route">काठमाण्डौ<span class="arrow">→</span>काँकडभिट्टा</div>
     </div>
-    <div class="hint">Drag to orbit · scroll or pinch to zoom · right-drag to pan</div>
+    <div class="camstate">
+      <div class="cam-badge plate" id="cam-badge"><b>1</b>Chase</div>
+      <button class="iconbtn plate" id="help-btn" aria-expanded="true" aria-controls="help" title="Controls">?</button>
+    </div>
   </div>
   <div></div>
-  <div class="bottom">
+  <div class="row bottom">
     <div class="dock">
-      <div class="chips" role="group" aria-label="Camera views">
-        <button class="chip" data-view="hero" aria-pressed="true">Overview</button>
-        <button class="chip" data-view="front" aria-pressed="false">Front</button>
-        <button class="chip" data-view="door" aria-pressed="false">Door side</button>
-        <button class="chip" data-view="driver" aria-pressed="false">Driver side</button>
-        <button class="chip" data-view="rear" aria-pressed="false">Rear</button>
-        <button class="chip" data-view="top" aria-pressed="false">Roof</button>
-        <button class="chip" data-view="cabin" aria-pressed="false">Inside cabin</button>
-      </div>
+      <div class="chips" id="chips" role="group" aria-label="Cameras"></div>
       <div class="toggles">
-        <label class="toggle"><input type="checkbox" id="spin" checked><span>Turntable</span></label>
-        <label class="toggle"><input type="checkbox" id="cabinlights" checked><span>Cabin lights</span></label>
-        <label class="toggle"><input type="checkbox" id="headlights"><span>Headlights</span></label>
+        <label class="toggle"><input type="checkbox" id="t-mirror" checked><span>Rear-view mirror</span></label>
+        <label class="toggle"><input type="checkbox" id="t-head"><span>Headlights</span></label>
+        <label class="toggle"><input type="checkbox" id="t-cabin" checked><span>Cabin lights</span></label>
       </div>
     </div>
-    <dl class="spec" aria-label="Specifications">
-      <dt>Length</dt><dd>11.00 m</dd>
-      <dt>Width</dt><dd>2.60 m</dd>
-      <dt>Height</dt><dd>3.45 m</dd>
-      <dt>Wheelbase</dt><dd>5.80 m</dd>
-      <dt>Seats</dt><dd>2 + 1 sofa</dd>
-      <dt>Triangles</dt><dd id="tris">—</dd>
-    </dl>
+    <div class="speedo plate" aria-live="off">
+      <div class="kmh" id="kmh">0</div><div class="unit">km/h</div>
+      <div class="bar"><i id="speedbar"></i></div>
+      <div class="gear"><span id="g-r">R</span><span id="g-n" class="on">N</span><span id="g-d">D</span><span id="g-hb">· Handbrake</span></div>
+    </div>
   </div>
+</div>
+
+<div class="help plate" id="help">
+  <h2>Drive the bus</h2>
+  <dl>
+    <dt>W / ↑</dt><dd>Accelerate</dd>
+    <dt>S / ↓</dt><dd>Brake, then reverse</dd>
+    <dt>A D / ← →</dt><dd>Steer</dd>
+    <dt>Space</dt><dd>Handbrake</dd>
+    <dt>C · 1–0</dt><dd>Next camera · pick a camera</dd>
+    <dt>Hold B</dt><dd>Look back</dd>
+    <dt>Drag</dt><dd>Look around (orbit in camera 0)</dd>
+    <dt>M · L · H</dt><dd>Mirror · headlights · horn</dd>
+  </dl>
+  <p>Click the scene first so it receives your keys.</p>
+</div>
+
+<div class="touch" id="touch" hidden>
+  <div class="pad"><button data-k="left" aria-label="Steer left">◀</button><button data-k="right" aria-label="Steer right">▶</button></div>
+  <div class="pad"><button class="brk" data-k="brake" aria-label="Brake">BRK</button><button class="gas" data-k="gas" aria-label="Accelerate">GAS</button></div>
 </div>
 
 <script type="importmap">
@@ -145,174 +172,481 @@ const canvas = document.getElementById('stage');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.toneMapping = THREE.AgXToneMapping;
-renderer.toneMappingExposure = 1.15;
+renderer.toneMappingExposure = 1.1;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.autoClear = false;
 
+// ---------------------------------------------------------------- world
+const SKY = new THREE.Color(0xa9bdd0);
 const scene = new THREE.Scene();
-const DUSK = new THREE.Color(0x12161b);
-scene.background = DUSK;
-scene.fog = new THREE.Fog(DUSK, 30, 70);
+scene.background = SKY;
+scene.fog = new THREE.Fog(SKY, 120, 1600);
 const pmrem = new THREE.PMREMGenerator(renderer);
 scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-scene.environmentIntensity = 0.55;
+scene.environmentIntensity = 0.5;
 
-const camera = new THREE.PerspectiveCamera(38, 1, 0.05, 200);
-camera.position.set(11, 4.5, 13);
-const controls = new OrbitControls(camera, canvas);
-controls.enableDamping = true;
-controls.target.set(0, 1.6, 0);
-controls.maxPolarAngle = Math.PI * 0.495;
-controls.minDistance = 3;
-controls.maxDistance = 40;
-controls.autoRotate = !reduceMotion;
-controls.autoRotateSpeed = 0.6;
-
-// Lighting: warm low sun + cool sky fill.
-scene.add(new THREE.HemisphereLight(0xbfd2ff, 0x2a2420, 0.9));
-const sun = new THREE.DirectionalLight(0xffe2bf, 2.6);
-sun.position.set(9, 14, 7);
+scene.add(new THREE.HemisphereLight(0xcfe0ff, 0x4a4535, 1.1));
+const sun = new THREE.DirectionalLight(0xfff0d8, 2.8);
 sun.castShadow = true;
 sun.shadow.mapSize.set(2048, 2048);
-Object.assign(sun.shadow.camera, { left: -9, right: 9, top: 9, bottom: -9, near: 1, far: 40 });
+Object.assign(sun.shadow.camera, { left: -16, right: 16, top: 16, bottom: -16, near: 1, far: 80 });
 sun.shadow.bias = -0.0004;
-sun.shadow.normalBias = 0.02;
-scene.add(sun);
+sun.shadow.normalBias = 0.03;
+scene.add(sun, sun.target);
+const SUN_OFFSET = new THREE.Vector3(18, 30, 10);
 
-// Bus park bay: asphalt pad with yellow bay lines and a kerb stop.
-const ground = new THREE.Mesh(new THREE.CircleGeometry(40, 64),
-  new THREE.MeshStandardMaterial({ color: 0x1d2228, roughness: 0.92 }));
+const ROAD_LEN = 4000, ROAD_W = 10;
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(8000, 8000), new THREE.MeshStandardMaterial({ color: 0x6f7a4c, roughness: 1 }));
 ground.rotation.x = -Math.PI / 2;
 ground.receiveShadow = true;
 scene.add(ground);
-const paint = new THREE.MeshStandardMaterial({ color: 0xf2b233, roughness: 0.7 });
-for (const x of [-2.1, 2.1]) {
-  const line = new THREE.Mesh(new THREE.PlaneGeometry(0.12, 15), paint);
-  line.rotation.x = -Math.PI / 2; line.position.set(x, 0.003, -0.5);
-  scene.add(line);
-}
-const stop = new THREE.Mesh(new THREE.PlaneGeometry(4.32, 0.12), paint);
-stop.rotation.x = -Math.PI / 2; stop.position.set(0, 0.003, -8);
-scene.add(stop);
 
-// Cabin and headlight lamps (not part of the exported model).
+function roadTexture() {
+  const c = document.createElement('canvas');
+  c.width = 256; c.height = 1024;
+  const g = c.getContext('2d');
+  g.fillStyle = '#3b3f44'; g.fillRect(0, 0, 256, 1024);
+  for (let i = 0; i < 9000; i++) {           // aggregate speckle
+    const v = 50 + Math.random() * 40;
+    g.fillStyle = `rgb(${v},${v + 2},${v + 5})`;
+    g.fillRect(Math.random() * 256, Math.random() * 1024, 2, 2);
+  }
+  g.fillStyle = '#e9c34a';                     // yellow edge lines
+  g.fillRect(8, 0, 6, 1024); g.fillRect(242, 0, 6, 1024);
+  g.fillStyle = '#f2f0ea';                     // dashed centre line
+  for (let y = 0; y < 1024; y += 256) g.fillRect(125, y, 6, 140);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.repeat.set(1, ROAD_LEN / 24);
+  t.anisotropy = renderer.capabilities.getMaxAnisotropy();
+  return t;
+}
+const road = new THREE.Mesh(new THREE.PlaneGeometry(ROAD_W, ROAD_LEN), new THREE.MeshStandardMaterial({ map: roadTexture(), roughness: 0.9 }));
+road.rotation.x = -Math.PI / 2;
+road.position.y = 0.01;
+road.receiveShadow = true;
+scene.add(road);
+
+// Seeded random so the roadside looks the same on every visit.
+let seed = 7;
+const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+
+// Trees: instanced trunks + canopies, kept off the road.
+const TREES = 700;
+const trunks = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.18, 0.25, 2.4, 6), new THREE.MeshStandardMaterial({ color: 0x5a4330, roughness: 1 }), TREES);
+const crowns = new THREE.InstancedMesh(new THREE.ConeGeometry(1.8, 5, 7), new THREE.MeshStandardMaterial({ color: 0x3f6b35, roughness: 1 }), TREES);
+const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), p = new THREE.Vector3();
+for (let i = 0; i < TREES; i++) {
+  const side = rnd() < 0.5 ? -1 : 1;
+  const x = side * (ROAD_W / 2 + 4 + rnd() * 140), z = (rnd() - 0.5) * ROAD_LEN, k = 0.7 + rnd() * 0.9;
+  s.set(k, k, k);
+  m4.compose(p.set(x, 1.2 * k, z), q, s); trunks.setMatrixAt(i, m4);
+  m4.compose(p.set(x, (2.4 + 2.3) * k, z), q, s); crowns.setMatrixAt(i, m4);
+}
+trunks.castShadow = crowns.castShadow = true;
+scene.add(trunks, crowns);
+
+// Electric poles every 50 m on the left verge.
+const POLES = Math.floor(ROAD_LEN / 50);
+const poles = new THREE.InstancedMesh(new THREE.BoxGeometry(0.22, 9, 0.22), new THREE.MeshStandardMaterial({ color: 0x8d8a82, roughness: 0.8 }), POLES);
+for (let i = 0; i < POLES; i++) { m4.makeTranslation(-ROAD_W / 2 - 1.5, 4.5, -ROAD_LEN / 2 + i * 50); poles.setMatrixAt(i, m4); }
+poles.castShadow = true;
+scene.add(poles);
+
+// Hills around the valley and white Himalayan peaks on the horizon.
+const hillMat = new THREE.MeshStandardMaterial({ color: 0x4f6a3e, roughness: 1, flatShading: true });
+for (let i = 0; i < 46; i++) {
+  const a = rnd() * Math.PI * 2, r = 420 + rnd() * 700, h = 60 + rnd() * 140;
+  const hill = new THREE.Mesh(new THREE.ConeGeometry(120 + rnd() * 160, h, 7), hillMat);
+  hill.position.set(Math.cos(a) * r, h / 2 - 2, Math.sin(a) * r);
+  if (Math.abs(hill.position.x) < 160) hill.position.x += Math.sign(hill.position.x || 1) * 200;
+  scene.add(hill);
+}
+const snowMat = new THREE.MeshStandardMaterial({ color: 0xe9eef3, roughness: 0.9, flatShading: true });
+for (let i = 0; i < 9; i++) {
+  const peak = new THREE.Mesh(new THREE.ConeGeometry(180 + rnd() * 120, 380 + rnd() * 260, 6), snowMat);
+  peak.position.set(-900 + i * 230 + rnd() * 80, 150, 1450 + rnd() * 150);
+  scene.add(peak);
+}
+
+// ---------------------------------------------------------------- vehicle
+const vehicle = new THREE.Group();            // moves and turns; forward is +Z
+const body = new THREE.Group();               // leans with acceleration and turns
+vehicle.add(body);
+scene.add(vehicle);
+
 const cabinLights = new THREE.Group();
 for (const z of [-3.6, -1.2, 1.2, 3.4]) {
-  const p = new THREE.PointLight(0xffe7cc, 1.6, 4.5, 1.6);
-  p.position.set(0.2, 3.1, z);
-  cabinLights.add(p);
+  const l = new THREE.PointLight(0xffe7cc, 1.6, 4.5, 1.6);
+  l.position.set(0.2, 3.1, z);
+  cabinLights.add(l);
 }
-scene.add(cabinLights);
+body.add(cabinLights);
 const headlights = new THREE.Group();
 for (const x of [-1.08, 1.08]) {
-  const s = new THREE.SpotLight(0xfff4e0, 60, 25, 0.45, 0.6, 1.5);
-  s.position.set(x, 0.95, 5.6);
-  s.target.position.set(x * 1.4, 0, 14);
-  headlights.add(s, s.target);
+  const l = new THREE.SpotLight(0xfff4e0, 90, 60, 0.42, 0.6, 1.2);
+  l.position.set(x, 0.95, 5.6);
+  l.target.position.set(x * 1.3, 0, 30);
+  headlights.add(l, l.target);
 }
 headlights.visible = false;
-scene.add(headlights);
+body.add(headlights);
 
-// Views in glTF space: front of the bus is +Z, door side +X, up +Y.
-const views = {
-  hero:   { pos: [11, 4.5, 13],   target: [0, 1.6, 0],    min: 3,    max: 40 },
-  front:  { pos: [0, 2.2, 13.5],  target: [0, 1.8, 0],    min: 3,    max: 40 },
-  door:   { pos: [15, 2.4, 1],    target: [0, 1.7, 0],    min: 3,    max: 40 },
-  driver: { pos: [-15, 2.4, -1],  target: [0, 1.7, 0],    min: 3,    max: 40 },
-  rear:   { pos: [2, 2.6, -13.5], target: [0, 1.9, 0],    min: 3,    max: 40 },
-  top:    { pos: [0.01, 20, 0.5], target: [0, 1.5, 0],    min: 3,    max: 40 },
-  cabin:  { pos: [0.22, 2.4, -4.2], target: [0.22, 2.25, -3.7], min: 0.01, max: 2.5 },
-};
-let tween = null;
-function goTo(name) {
-  const v = views[name];
-  document.querySelectorAll('.chip').forEach(c => c.setAttribute('aria-pressed', String(c.dataset.view === name)));
-  controls.minDistance = Math.min(v.min, controls.minDistance);
-  controls.maxDistance = Math.max(v.max, controls.maxDistance);
-  controls.maxPolarAngle = name === 'cabin' ? Math.PI : Math.PI * 0.495;
-  const to = { pos: new THREE.Vector3(...v.pos), target: new THREE.Vector3(...v.target), min: v.min, max: v.max };
-  if (name === 'cabin') { spin.checked = false; controls.autoRotate = false; }
-  if (reduceMotion) { camera.position.copy(to.pos); controls.target.copy(to.target); finish(to); return; }
-  tween = { t: 0, from: { pos: camera.position.clone(), target: controls.target.clone() }, to };
+const car = { speed: 0, steer: 0, heading: 0, throttle: 0, roll: 0, pitch: 0, handbrake: false };
+const WHEELBASE = 5.8, MAX_FWD = 27, MAX_REV = 6, MAX_STEER = 0.6;
+
+// ---------------------------------------------------------------- input
+const keys = new Set();
+const touch = { left: false, right: false, gas: false, brake: false };
+const held = (...k) => k.some(x => keys.has(x));
+addEventListener('keydown', e => {
+  if (e.target.closest && e.target.closest('input')) return;
+  const k = e.key.toLowerCase();
+  if ([' ', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(k)) e.preventDefault();
+  if (e.repeat) { keys.add(k); return; }
+  keys.add(k);
+  if (k === 'c') setCam(CAMS[(CAMS.findIndex(c => c.id === cam.id) + 1) % CAMS.length].id);
+  const n = CAMS.find(c => c.key === k);
+  if (n) setCam(n.id);
+  if (k === 'm') toggle('t-mirror');
+  if (k === 'l') toggle('t-head');
+  if (k === 'h') horn();
+});
+addEventListener('keyup', e => keys.delete(e.key.toLowerCase()));
+addEventListener('blur', () => keys.clear());
+function toggle(id) { const el = document.getElementById(id); el.checked = !el.checked; el.dispatchEvent(new Event('change')); }
+
+if (matchMedia('(pointer: coarse)').matches) {
+  const pad = document.getElementById('touch');
+  pad.hidden = false;
+  pad.querySelectorAll('button').forEach(b => {
+    const k = b.dataset.k;
+    b.addEventListener('pointerdown', e => { touch[k] = true; b.setPointerCapture(e.pointerId); });
+    const up = () => { touch[k] = false; };
+    b.addEventListener('pointerup', up); b.addEventListener('pointercancel', up);
+  });
 }
-function finish(to) { controls.minDistance = to.min; controls.maxDistance = to.max; }
-document.querySelectorAll('.chip').forEach(c => c.addEventListener('click', () => goTo(c.dataset.view)));
 
-const spin = document.getElementById('spin');
-spin.checked = !reduceMotion;
-spin.addEventListener('change', () => { controls.autoRotate = spin.checked; });
-document.getElementById('cabinlights').addEventListener('change', e => { cabinLights.visible = e.target.checked; });
-document.getElementById('headlights').addEventListener('change', e => { headlights.visible = e.target.checked; });
+// Two-tone bus horn (starts only after a key press, as browsers require).
+let audio = null;
+function horn() {
+  try {
+    audio ??= new AudioContext();
+    const t = audio.currentTime;
+    for (const [f, start] of [[392, 0], [494, 0], [392, 0.28], [494, 0.28]]) {
+      const o = audio.createOscillator(), g = audio.createGain();
+      o.type = 'sawtooth'; o.frequency.value = f;
+      g.gain.setValueAtTime(0, t + start);
+      g.gain.linearRampToValueAtTime(0.06, t + start + 0.02);
+      g.gain.setValueAtTime(0.06, t + start + 0.2);
+      g.gain.linearRampToValueAtTime(0, t + start + 0.24);
+      o.connect(g).connect(audio.destination);
+      o.start(t + start); o.stop(t + start + 0.25);
+    }
+  } catch { /* no audio available */ }
+}
 
-// Load the bus.
-const bar = document.getElementById('bar');
+// Free-look: drag in any following camera to look around; it eases back.
+const look = { yaw: 0, pitch: 0, dragging: false, lx: 0, ly: 0 };
+canvas.addEventListener('pointerdown', e => {
+  canvas.focus();
+  if (cam.id === 'orbit') return;
+  look.dragging = true; look.lx = e.clientX; look.ly = e.clientY;
+  canvas.setPointerCapture(e.pointerId);
+});
+canvas.addEventListener('pointermove', e => {
+  if (!look.dragging) return;
+  look.yaw -= (e.clientX - look.lx) * 0.005;
+  look.pitch = THREE.MathUtils.clamp(look.pitch - (e.clientY - look.ly) * 0.004, -0.9, 0.7);
+  look.lx = e.clientX; look.ly = e.clientY;
+});
+const endDrag = () => { look.dragging = false; };
+canvas.addEventListener('pointerup', endDrag);
+canvas.addEventListener('pointercancel', endDrag);
+
+// ---------------------------------------------------------------- cameras
+// Offsets are in the bus's own space: +Z forward, +X door side, +Y up.
+const camera = new THREE.PerspectiveCamera(60, 1, 0.05, 3000);
+const controls = new OrbitControls(camera, canvas);
+controls.enableDamping = true;
+controls.maxPolarAngle = Math.PI * 0.495;
+controls.minDistance = 4; controls.maxDistance = 60;
+controls.enabled = false;
+
+const V = (x, y, z) => new THREE.Vector3(x, y, z);
+const CAMS = [
+  { id: 'chase',  key: '1', name: 'Chase',         pos: V(0, 5.2, -14),  at: V(0, 2.2, 6),   fov: 60, lag: 5 },
+  { id: 'far',    key: '2', name: 'Far chase',     pos: V(0, 10, -27),   at: V(0, 2, 8),     fov: 55, lag: 3 },
+  { id: 'driver', key: '3', name: 'Driver',        pos: V(-0.62, 2.45, 4.05), at: V(-0.62, 2.25, 30), fov: 72, rigid: true, mirrors: 'side' },
+  { id: 'bumper', key: '4', name: 'Bumper',        pos: V(0, 1.15, 5.85), at: V(0, 1.0, 30), fov: 68, rigid: true },
+  { id: 'second', key: '5', name: 'Second person', pos: V(1.5, 3.2, 17),  at: V(0, 2.0, 0),   fov: 55, lag: 4 },
+  { id: 'wheel',  key: '6', name: 'Wheel',         pos: V(1.95, 0.75, -2.2), at: V(1.3, 0.9, 10), fov: 62, rigid: true },
+  { id: 'cabin',  key: '7', name: 'Passenger',     pos: V(0.22, 2.4, -4.0), at: V(0.22, 2.3, 6), fov: 72, rigid: true },
+  { id: 'top',    key: '8', name: 'Bird’s eye', fov: 45, lag: 4 },
+  { id: 'tv',     key: '9', name: 'TV cameras',    fov: 30 },
+  { id: 'orbit',  key: '0', name: 'Orbit',         fov: 40 },
+];
+let cam = CAMS[0];
+const chips = document.getElementById('chips');
+for (const c of CAMS) {
+  const b = document.createElement('button');
+  b.className = 'chip'; b.dataset.cam = c.id;
+  b.innerHTML = `<kbd>${c.key}</kbd>${c.name}`;
+  b.addEventListener('click', () => { setCam(c.id); canvas.focus(); });
+  chips.append(b);
+}
+const tv = { pos: new THREE.Vector3(), aim: new THREE.Vector3(), placed: false };
+let snap = true;  // jump instead of easing on the next frame
+
+function setCam(id) {
+  cam = CAMS.find(c => c.id === id);
+  document.querySelectorAll('.chip').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.cam === id)));
+  document.getElementById('cam-badge').innerHTML = `<b>${cam.key}</b>${cam.name}`;
+  look.yaw = look.pitch = 0;
+  tv.placed = false;
+  controls.enabled = id === 'orbit';
+  if (id === 'orbit') {
+    const c = vehicle.localToWorld(V(11, 4.5, 13));
+    camera.position.copy(c);
+    controls.target.copy(vehicle.localToWorld(V(0, 1.7, 0)));
+  }
+  camera.up.set(0, 1, 0);
+  // From inside, tinted glass looks much lighter than from outside.
+  const inside = id === 'driver' || id === 'cabin';
+  for (const m of glassMats) m.color.copy(inside ? new THREE.Color(0.75, 0.78, 0.8) : m.userData.tint);
+  snap = true;
+}
+
+const tmpA = new THREE.Vector3(), tmpB = new THREE.Vector3(), lookAt = new THREE.Vector3();
+const lastBus = new THREE.Vector3();
+function updateCamera(dt) {
+  const lookBack = keys.has('b');
+  const k = snap ? 1 : 1 - Math.exp(-dt * (cam.lag ?? 8));
+  if (!look.dragging) { look.yaw *= Math.exp(-dt * 2.5); look.pitch *= Math.exp(-dt * 2.5); }
+
+  if (cam.id === 'orbit') {
+    const busPos = vehicle.position;
+    tmpA.subVectors(busPos, lastBus);       // carry the orbit along with the bus
+    camera.position.add(tmpA); controls.target.add(tmpA);
+    controls.autoRotate = car.speed === 0 && !reduceMotion;
+    controls.autoRotateSpeed = 0.5;
+    controls.update();
+  } else if (cam.id === 'top') {
+    tmpA.copy(vehicle.position).add(V(0, 42, 0));
+    camera.position.lerp(tmpA, k);
+    camera.up.set(Math.sin(car.heading), 0, Math.cos(car.heading));   // map turns with the bus
+    camera.lookAt(vehicle.position);
+  } else if (cam.id === 'tv') {
+    const fwd = V(Math.sin(car.heading), 0, Math.cos(car.heading));
+    const dist = camera.position.distanceTo(vehicle.position);
+    const behind = tmpB.subVectors(vehicle.position, tv.pos).dot(fwd) > 25;
+    if (!tv.placed || behind || dist > 140) {   // cut to the next roadside camera ahead
+      const right = V(fwd.z, 0, -fwd.x);
+      const ahead = Math.max(30, Math.abs(car.speed) * 3.5);
+      tv.pos.copy(vehicle.position).addScaledVector(fwd, car.speed >= 0 ? ahead : -ahead)
+        .addScaledVector(right, (rnd() < 0.5 ? -1 : 1) * (9 + rnd() * 8)).setY(1.6 + rnd() * 5);
+      camera.position.copy(tv.pos);
+      tv.aim.copy(vehicle.position);
+      tv.placed = true;
+    }
+    tv.aim.lerp(tmpA.copy(vehicle.position).setY(1.8), snap ? 1 : 1 - Math.exp(-dt * 6));
+    camera.lookAt(tv.aim);
+    camera.fov = THREE.MathUtils.clamp(THREE.MathUtils.radToDeg(2 * Math.atan(9 / Math.max(dist, 1))), 12, 55);
+  } else {
+    // Following cameras: offsets in bus space, optional look-back and free-look.
+    const pos = cam.pos.clone(), at = cam.at.clone();
+    if (lookBack) {
+      if (cam.rigid) { at.set(pos.x, pos.y, pos.z - 30); }
+      else { pos.z = -pos.z * 0.9; at.z = -at.z; }
+    }
+    vehicle.localToWorld(pos);
+    vehicle.localToWorld(at);
+    if (cam.rigid) camera.position.copy(pos);
+    else camera.position.lerp(pos, k);
+    // free-look rotates the view direction around the camera
+    const dir = tmpA.subVectors(at, camera.position);
+    const len = dir.length();
+    dir.normalize();
+    const yawQ = new THREE.Quaternion().setFromAxisAngle(V(0, 1, 0), look.yaw);
+    dir.applyQuaternion(yawQ);
+    const side = tmpB.crossVectors(dir, V(0, 1, 0)).normalize();
+    dir.applyQuaternion(new THREE.Quaternion().setFromAxisAngle(side, look.pitch));
+    lookAt.copy(camera.position).addScaledVector(dir, len);
+    camera.lookAt(lookAt);
+  }
+  if (cam.id !== 'tv' && cam.fov) camera.fov += ((cam.fov + (cam.id === 'chase' ? Math.abs(car.speed) * 0.35 : 0)) - camera.fov) * (snap ? 1 : 0.1);
+  camera.updateProjectionMatrix();
+  lastBus.copy(vehicle.position);
+  snap = false;
+}
+
+// ---------------------------------------------------------------- mirrors
+// Each mirror renders the scene to a texture shown flipped left-right, like glass.
+const overlay = new THREE.Scene();
+const overlayCam = new THREE.OrthographicCamera(0, 1, 1, 0, -1, 1);
+function makeMirror(from, to, w, h, fov) {
+  const rt = new THREE.WebGLRenderTarget(w, h, { type: THREE.HalfFloatType, samples: 4 });
+  const mcam = new THREE.PerspectiveCamera(fov, w / h, 0.1, 1500);
+  const geo = new THREE.PlaneGeometry(1, 1);
+  const uv = geo.attributes.uv;
+  for (let i = 0; i < uv.count; i++) uv.setX(i, 1 - uv.getX(i));   // mirror image
+  const frame = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ color: 0x0b0d10, toneMapped: false }));
+  const glass = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ map: rt.texture }));
+  overlay.add(frame, glass);
+  return { rt, mcam, from, to, frame, glass, w, h };
+}
+const mirrors = {
+  rear: makeMirror(V(0, 3.0, -5.7), V(0, 2.2, -40), 512, 160, 38),
+  left: makeMirror(V(1.40, 2.55, 6.0), V(3.4, 1.6, -30), 220, 320, 34),     // door-side mirror
+  right: makeMirror(V(-1.40, 2.55, 6.0), V(-3.4, 1.6, -30), 220, 320, 34),  // driver-side mirror
+};
+function layoutMirrors(W, H) {
+  const place = (m, cx, cy, w, h) => {
+    m.glass.position.set(cx, cy, 0); m.glass.scale.set(w, h, 1);
+    m.frame.position.set(cx, cy, -0.1); m.frame.scale.set(w + 8, h + 8, 1);
+  };
+  const rw = Math.min(380, W * 0.42), rh = rw * 0.3;
+  place(mirrors.rear, W / 2, H - 22 - rh / 2 - 74, rw, rh);
+  const sw = Math.min(140, W * 0.16), sh = sw * 1.45;
+  place(mirrors.left, W - 26 - sw / 2, H * 0.52, sw, sh);
+  place(mirrors.right, 26 + sw / 2, H * 0.52, sw, sh);
+  overlayCam.right = W; overlayCam.top = H; overlayCam.updateProjectionMatrix();
+}
+function renderMirrors() {
+  const show = document.getElementById('t-mirror').checked;
+  const side = cam.mirrors === 'side';
+  const rear = show && !side && !['orbit', 'tv', 'top', 'second'].includes(cam.id);
+  mirrors.rear.glass.visible = mirrors.rear.frame.visible = rear;
+  for (const m of [mirrors.left, mirrors.right]) m.glass.visible = m.frame.visible = show && side;
+  for (const m of Object.values(mirrors)) {
+    if (!m.glass.visible) continue;
+    m.mcam.position.copy(vehicle.localToWorld(m.from.clone()));
+    m.mcam.lookAt(vehicle.localToWorld(m.to.clone()));
+    renderer.setRenderTarget(m.rt);
+    renderer.clear();
+    renderer.render(scene, m.mcam);
+  }
+  renderer.setRenderTarget(null);
+}
+
+// ---------------------------------------------------------------- toggles
+const helpBtn = document.getElementById('help-btn'), help = document.getElementById('help');
+let helpPinned = false;  // the help card tucks away once you start driving, unless reopened
+helpBtn.addEventListener('click', () => {
+  help.hidden = !help.hidden; helpPinned = !help.hidden;
+  helpBtn.setAttribute('aria-expanded', String(!help.hidden));
+});
+document.getElementById('t-head').addEventListener('change', e => { headlights.visible = e.target.checked; });
+document.getElementById('t-cabin').addEventListener('change', e => { cabinLights.visible = e.target.checked; });
+
+// ---------------------------------------------------------------- driving
+const kmhEl = document.getElementById('kmh'), barEl = document.getElementById('speedbar');
+const gears = { r: document.getElementById('g-r'), n: document.getElementById('g-n'), d: document.getElementById('g-d'), hb: document.getElementById('g-hb') };
+function drive(dt) {
+  if (!(dt > 0)) return;
+  const gas = held('w', 'arrowup') || touch.gas;
+  const brake = held('s', 'arrowdown') || touch.brake;
+  const left = held('a', 'arrowleft') || touch.left, right = held('d', 'arrowright') || touch.right;
+  car.handbrake = keys.has(' ');
+
+  let acc = 0;
+  if (gas && !help.hidden && !helpPinned) { help.hidden = true; helpBtn.setAttribute('aria-expanded', 'false'); }
+  if (gas) acc = car.speed >= -0.5 ? 3.2 * (1 - car.speed / MAX_FWD) : 9;
+  if (brake) acc = car.speed > 0.5 ? -9 : -2.2 * (1 + car.speed / MAX_REV);
+  if (!gas && !brake) acc = -Math.sign(car.speed) * Math.min(Math.abs(car.speed) / dt, 0.6 + 0.0025 * car.speed * car.speed);
+  if (car.handbrake) acc = -Math.sign(car.speed) * Math.min(Math.abs(car.speed) / dt, 12);
+  car.speed = THREE.MathUtils.clamp(car.speed + acc * dt, -MAX_REV, MAX_FWD);
+
+  const target = ((left ? 1 : 0) - (right ? 1 : 0)) * MAX_STEER / (1 + Math.abs(car.speed) * 0.06);
+  car.steer += (target - car.steer) * Math.min(1, dt * 4);
+  const yawRate = car.speed * Math.tan(car.steer) / WHEELBASE;
+  car.heading += yawRate * dt;
+  vehicle.rotation.y = car.heading;
+  vehicle.position.x += Math.sin(car.heading) * car.speed * dt;
+  vehicle.position.z += Math.cos(car.heading) * car.speed * dt;
+
+  // Body lean: roll out of turns, pitch under braking and acceleration.
+  car.roll += (THREE.MathUtils.clamp(-yawRate * car.speed * 0.012, -0.06, 0.06) - car.roll) * Math.min(1, dt * 3);
+  car.pitch += (THREE.MathUtils.clamp(-acc * 0.004, -0.03, 0.03) - car.pitch) * Math.min(1, dt * 3);
+  body.rotation.set(car.pitch, 0, car.roll);
+
+  const kmh = Math.round(Math.abs(car.speed) * 3.6);
+  kmhEl.textContent = kmh;
+  barEl.style.width = Math.min(100, kmh / (MAX_FWD * 3.6) * 100) + '%';
+  const g = car.speed < -0.3 ? 'r' : car.speed > 0.3 ? 'd' : 'n';
+  for (const key of ['r', 'n', 'd']) gears[key].classList.toggle('on', key === g);
+  gears.hb.classList.toggle('on', car.handbrake);
+
+  sun.position.copy(vehicle.position).add(SUN_OFFSET);
+  sun.target.position.copy(vehicle.position);
+}
+
+// ---------------------------------------------------------------- load
+const loadbar = document.getElementById('loadbar');
 const loaderText = document.getElementById('loader-text');
-// The model ships as base64 text (agni_bus.glb.b64.txt) so any static host
-// serves it; decode it back to the binary GLB and parse it.
+window.viewer = { camera, controls, car, vehicle, setCam };  // handy in the console
+
+// The model ships as base64 text so any static host serves it; decode, then parse.
 const fileLoader = new THREE.FileLoader();
 fileLoader.setResponseType('text');
 fileLoader.load('agni_bus.glb.b64.txt', b64 => {
   const bin = Uint8Array.from(atob(b64.trim()), c => c.charCodeAt(0));
   const loader = new GLTFLoader();
-  // Embedded textures become blob: URLs. ImageBitmapLoader fetch()es them,
-  // which strict hosts block (the bus then renders untextured white); an
-  // <img>-based TextureLoader is allowed everywhere.
+  // Embedded textures become blob: URLs; load them through <img>, which strict
+  // hosts allow (fetch-based ImageBitmapLoader is blocked and leaves the bus white).
   loader.register(parser => {
     parser.textureLoader = new THREE.TextureLoader(parser.options.manager);
     return { name: 'img_textures' };
   });
   loader.parse(bin.buffer, '', onModel, onError);
-}, e => {
-  if (e.total) bar.style.width = (100 * e.loaded / e.total).toFixed(0) + '%';
-}, onError);
+}, e => { if (e.total) loadbar.style.width = (100 * e.loaded / e.total).toFixed(0) + '%'; }, onError);
 
-window.viewer = { camera, controls };  // handy for debugging in the console
-
+const glassMats = [];
 function onModel(gltf) {
-  const bus = gltf.scene;
-  let tris = 0;
-  bus.traverse(o => {
+  gltf.scene.traverse(o => {
     if (!o.isMesh) return;
-    o.castShadow = true;
-    o.receiveShadow = true;
-    const g = o.geometry;
-    tris += (g.index ? g.index.count : g.attributes.position.count) / 3;
+    o.castShadow = o.receiveShadow = true;
     const m = o.material;
-    if (m && m.transmission > 0) { m.thickness = 0.01; m.envMapIntensity = 1.2; o.castShadow = false; }
+    if (m && m.transmission > 0) {
+      m.thickness = 0.01; m.envMapIntensity = 1.2; o.castShadow = false;
+      m.userData.tint = m.color.clone();
+      glassMats.push(m);
+    }
   });
-  document.getElementById('tris').textContent = Math.round(tris / 1000) + 'k';
-  scene.add(bus);
+  body.add(gltf.scene);
   document.getElementById('loader').hidden = true;
+  setCam('chase');
+  canvas.focus();
 }
-
 function onError(err) {
   console.error(err);
   loaderText.parentElement.innerHTML =
     '<div class="error">The bus model did not load. Serve this folder over HTTP (for example <code>python3 -m http.server</code>) rather than opening the file directly, and check your connection to cdn.jsdelivr.net.</div>';
 }
 
+// ---------------------------------------------------------------- loop
 function resize() {
   const w = canvas.clientWidth, h = canvas.clientHeight;
   renderer.setSize(w, h, false);
   camera.aspect = w / h;
-  camera.fov = w < h ? 55 : 38;
   camera.updateProjectionMatrix();
+  layoutMirrors(w, h);
 }
 addEventListener('resize', resize);
 resize();
+setCam('chase');
 
 const clock = new THREE.Clock();
-const ease = t => 1 - Math.pow(1 - t, 3);
 renderer.setAnimationLoop(() => {
-  const dt = clock.getDelta();
-  if (tween) {
-    tween.t = Math.min(1, tween.t + dt / 1.1);
-    const k = ease(tween.t);
-    camera.position.lerpVectors(tween.from.pos, tween.to.pos, k);
-    controls.target.lerpVectors(tween.from.target, tween.to.target, k);
-    if (tween.t === 1) { finish(tween.to); tween = null; }
-  }
-  controls.update();
+  const dt = Math.min(clock.getDelta(), 0.05);
+  drive(dt);
+  updateCamera(dt);
+  renderMirrors();
+  renderer.clear();
   renderer.render(scene, camera);
+  renderer.clearDepth();
+  renderer.render(overlay, overlayCam);
 });
 </script>
