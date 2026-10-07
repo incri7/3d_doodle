@@ -379,10 +379,10 @@ class Bus {
       inner = Math.sign(d) * Math.atan(BUS.wheelbase / (R - BUS.track / 2));
       outer = Math.sign(d) * Math.atan(BUS.wheelbase / (R + BUS.track / 2));
     }
-    // + steer turns toward +X, so the +X wheel (index 0) is the inner one.
-    // cannon-es steers the opposite way in this axis setup, hence the minus.
-    v.setSteeringValue(-(d > 0 ? inner : outer), 0);
-    v.setSteeringValue(-(d > 0 ? outer : inner), 1);
+    // + steer turns toward +X (the driver's left), so the +X wheel (index 0)
+    // is the inner one. Verified in the browser: A must move the bus toward +X.
+    v.setSteeringValue(d > 0 ? inner : outer, 0);
+    v.setSteeringValue(d > 0 ? outer : inner, 1);
 
     // Gear selection (automatic, with reverse on S at a standstill).
     const wantForward = input.gas > 0, wantBack = input.brake > 0;
@@ -454,7 +454,7 @@ class Bus {
     return this.vehicle.wheelInfos.map((w, i) => ({
       name: BUS.wheels[i].name,
       spin: -w.rotation,        // + = rolling forward
-      steer: -w.steering,       // + = toward +X
+      steer: w.steering,        // + = toward +X
       // + = wheel sits lower than the modelled position (suspension extended)
       drop: (w.suspensionLength - (BUS.restLength - sag)),
       contact: w.isInContact,
@@ -1039,7 +1039,7 @@ function drive(dt) {
     w.node.position.y = w.base.y - ws.drop;
     w.node.rotation.set(ws.spin % (Math.PI * 2), ws.steer, 0);
   }
-  if (parts.steering) parts.steering.quaternion.setFromAxisAngle(STEER_AXIS, -bus.steer * STEER_RATIO);
+  if (parts.steering) parts.steering.quaternion.setFromAxisAngle(STEER_AXIS, bus.steer * STEER_RATIO);  // + = counter-clockwise for the driver (left turn)
   for (const p of props) { p.mesh.position.copy(p.body.position); p.mesh.quaternion.copy(p.body.quaternion); }
 
   // HUD
@@ -1061,36 +1061,135 @@ function drive(dt) {
 }
 
 // ---------------------------------------------------------------- engine, tyres, impacts (sound)
-let engine = null;
+// Diesel bus sound. Real recordings can't be fetched here, so the engine is
+// built the way game audio does it: an engine cycle is rendered once into a
+// loop (6-cylinder firing rhythm with uneven cylinders, exhaust thump, body
+// resonance, diesel combustion clatter) and pitch-shifted with RPM. Two loops
+// (idle and high revs) cross-fade so the timbre stays natural.
+function dieselLoop(ctx, refRpm, cycles, seed) {
+  const sr = ctx.sampleRate, period = 20 / refRpm;          // 3 firings per revolution
+  const firings = 6 * cycles, len = Math.round(firings * period * sr);
+  const buf = ctx.createBuffer(1, len, sr), d = buf.getChannelData(0);
+  let r = seed;
+  const rand = () => (r = (r * 16807) % 2147483647) / 2147483647;
+  const cyl = [1.0, 0.84, 1.1, 0.92, 1.14, 0.88];           // uneven cylinders: lumpy idle
+  const n = Math.floor(period * sr * 2.4);
+  for (let k = 0; k < firings; k++) {
+    const a = cyl[k % 6] * (0.9 + rand() * 0.2);
+    const start = Math.floor((k * period + (rand() - 0.5) * period * 0.05) * sr);
+    for (let i = 0; i < n; i++) {
+      const t = i / sr;
+      let v = a * (0.95 * Math.sin(2 * Math.PI * 58 * t) * Math.exp(-t * 34)       // exhaust thump
+                 + 0.5 * Math.sin(2 * Math.PI * 142 * t + 0.6) * Math.exp(-t * 52) // block / body
+                 + 0.2 * Math.sin(2 * Math.PI * 395 * t + 1.3) * Math.exp(-t * 95));
+      v += a * 0.55 * (rand() * 2 - 1) * Math.exp(-t * 700);                       // diesel clatter
+      v += a * 0.14 * (rand() * 2 - 1) * Math.exp(-t * 55);                        // combustion roar
+      d[(start + i + len) % len] += v;                                              // wraps: seamless loop
+    }
+  }
+  let peak = 0;
+  for (let i = 0; i < len; i++) peak = Math.max(peak, Math.abs(d[i]));
+  for (let i = 0; i < len; i++) d[i] *= 0.9 / peak;
+  return buf;
+}
+
+let engine = null, noiseBuf = null;
+function noise() {
+  if (!noiseBuf) {
+    const len = audio.sampleRate * 2;
+    noiseBuf = audio.createBuffer(1, len, audio.sampleRate);
+    const d = noiseBuf.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+  }
+  const src = audio.createBufferSource();
+  src.buffer = noiseBuf; src.loop = true;
+  return src;
+}
+// Short pneumatic hiss: the air-brake "PSSHHT" and gear-change puffs.
+function airHiss(level, dur) {
+  if (!audio || !engine) return;
+  const t = audio.currentTime, src = noise();
+  const hp = audio.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 2200;
+  const pk = audio.createBiquadFilter(); pk.type = 'peaking'; pk.frequency.value = 5200; pk.gain.value = 8;
+  const g = audio.createGain();
+  g.gain.setValueAtTime(0, t);
+  g.gain.linearRampToValueAtTime(level, t + 0.015);
+  g.gain.setValueAtTime(level, t + dur * 0.35);
+  g.gain.exponentialRampToValueAtTime(0.0008, t + dur);
+  src.connect(hp).connect(pk).connect(g).connect(engine.master);
+  src.start(t); src.stop(t + dur + 0.05);
+}
+
+const sfx = { lastGear: 0, braked: 0, hissedStop: false, hb: false };
 function engineSound(input) {
   const on = document.getElementById('t-engine').checked && audio;
-  if (!on) { if (engine) { engine.gain.gain.value = 0; engine.tyre.gain.value = 0; } return; }
+  if (!on) { if (engine) engine.master.gain.setTargetAtTime(0, audio.currentTime, 0.05); return; }
+  const ctx = audio;
   if (!engine) {
-    const ctx = audio;
-    const gain = ctx.createGain(); gain.gain.value = 0;
-    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.Q.value = 1.2;
-    const o1 = ctx.createOscillator(), o2 = ctx.createOscillator();
-    o1.type = 'sawtooth'; o2.type = 'square';
-    const g2 = ctx.createGain(); g2.gain.value = 0.35;
-    o1.connect(lp); o2.connect(g2).connect(lp); lp.connect(gain).connect(ctx.destination);
-    // tyre squeal: filtered noise
-    const len = ctx.sampleRate, buf = ctx.createBuffer(1, len, ctx.sampleRate), d = buf.getChannelData(0);
-    for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
-    const noise = ctx.createBufferSource(); noise.buffer = buf; noise.loop = true;
-    const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 1700; bp.Q.value = 6;
-    const tyre = ctx.createGain(); tyre.gain.value = 0;
-    noise.connect(bp).connect(tyre).connect(ctx.destination);
-    o1.start(); o2.start(); noise.start();
-    engine = { gain, lp, o1, o2, tyre };
+    const master = ctx.createGain(); master.gain.value = 0; master.connect(ctx.destination);
+    const lowLoop = dieselLoop(ctx, 750, 4, 11), highLoop = dieselLoop(ctx, 1700, 6, 23);
+    const src = (b) => { const s = ctx.createBufferSource(); s.buffer = b; s.loop = true; return s; };
+    const low = src(lowLoop), high = src(highLoop), rasp = src(highLoop);
+    const gLow = ctx.createGain(), gHigh = ctx.createGain(), gRasp = ctx.createGain();
+    const shaper = ctx.createWaveShaper();
+    const curve = new Float32Array(1024);
+    for (let i = 0; i < 1024; i++) { const x = i / 511.5 - 1; curve[i] = Math.tanh(1.8 * x); }
+    shaper.curve = curve;
+    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 900; lp.Q.value = 0.8;
+    const boom = ctx.createBiquadFilter(); boom.type = 'peaking'; boom.frequency.value = 95; boom.Q.value = 1.1; boom.gain.value = 5;
+    const engBus = ctx.createGain(); engBus.gain.value = 0.5;
+    low.connect(gLow).connect(shaper); high.connect(gHigh).connect(shaper);
+    shaper.connect(lp).connect(boom).connect(engBus).connect(master);
+    // load rasp: the same loop through a mid band, only under throttle
+    const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 900; bp.Q.value = 0.9;
+    rasp.connect(bp).connect(gRasp).connect(master);
+    // turbo whistle
+    const turbo = ctx.createOscillator(); turbo.type = 'sine';
+    const gTurbo = ctx.createGain(); gTurbo.gain.value = 0;
+    turbo.connect(gTurbo).connect(master);
+    // road roar and body rattle (speed dependent), tyre squeal (sliding)
+    const road = noise(), roadLp = ctx.createBiquadFilter(); roadLp.type = 'lowpass'; roadLp.frequency.value = 320;
+    const gRoad = ctx.createGain(); gRoad.gain.value = 0;
+    road.connect(roadLp).connect(gRoad).connect(master);
+    const rattle = noise(), rattleBp = ctx.createBiquadFilter(); rattleBp.type = 'bandpass'; rattleBp.frequency.value = 1300; rattleBp.Q.value = 3;
+    const gRattle = ctx.createGain(); gRattle.gain.value = 0;
+    rattle.connect(rattleBp).connect(gRattle).connect(master);
+    const squeal = noise(), sqBp = ctx.createBiquadFilter(); sqBp.type = 'bandpass'; sqBp.frequency.value = 1700; sqBp.Q.value = 7;
+    const gSq = ctx.createGain(); gSq.gain.value = 0;
+    squeal.connect(sqBp).connect(gSq).connect(master);
+    // reverse beeper
+    const beep = ctx.createOscillator(); beep.type = 'square'; beep.frequency.value = 1150;
+    const gBeep = ctx.createGain(); gBeep.gain.value = 0;
+    beep.connect(gBeep).connect(master);
+    for (const n of [low, high, rasp, turbo, road, rattle, squeal, beep]) n.start();
+    engine = { master, low, high, rasp, gLow, gHigh, gRasp, lp, turbo, gTurbo, gRoad, gRattle, gSq, gBeep };
   }
-  const t = audio.currentTime, f = bus.rpm / 20;           // 6-cylinder firing frequency
-  engine.o1.frequency.setTargetAtTime(f, t, 0.05);
-  engine.o2.frequency.setTargetAtTime(f * 0.5, t, 0.05);
-  const load = input.gas || input.brake && bus.gear === -1 ? 1 : 0;
-  engine.lp.frequency.setTargetAtTime(220 + load * 500 + bus.rpm * 0.15, t, 0.08);
-  engine.gain.gain.setTargetAtTime(0.05 + load * 0.07, t, 0.1);
-  const sliding = bus.vehicle.sliding && Math.abs(bus.speed) > 6;
-  engine.tyre.gain.setTargetAtTime(sliding ? 0.05 : 0, t, 0.05);
+  const t = ctx.currentTime, e = engine, rpm = bus.rpm, speed = Math.abs(bus.speed);
+  const load = input.gas || (input.brake && bus.gear === -1) ? 1 : 0;
+  e.master.gain.setTargetAtTime(0.9, t, 0.1);
+  e.low.playbackRate.setTargetAtTime(rpm / 750, t, 0.04);
+  e.high.playbackRate.setTargetAtTime(rpm / 1700, t, 0.04);
+  e.rasp.playbackRate.setTargetAtTime(rpm / 1700, t, 0.04);
+  const x = Math.min(1, Math.max(0, (rpm - 1000) / 450));                    // cross-fade idle -> high
+  e.gLow.gain.setTargetAtTime(Math.cos(x * Math.PI / 2) * (0.75 + load * 0.25), t, 0.06);
+  e.gHigh.gain.setTargetAtTime(Math.sin(x * Math.PI / 2) * (0.75 + load * 0.25), t, 0.06);
+  e.gRasp.gain.setTargetAtTime(load * (0.05 + 0.08 * x), t, 0.08);
+  e.lp.frequency.setTargetAtTime(700 + load * 1100 + rpm * 0.35, t, 0.08);
+  e.turbo.frequency.setTargetAtTime(1900 + rpm * 1.1, t, 0.3);
+  e.gTurbo.gain.setTargetAtTime(load * Math.max(0, (rpm - 1100) / 1400) * 0.012, t, 0.4);
+  e.gRoad.gain.setTargetAtTime(Math.min(0.09, speed * 0.004), t, 0.2);
+  e.gRattle.gain.setTargetAtTime(Math.min(0.02, 0.003 + speed * 0.0008), t, 0.2);
+  e.gSq.gain.setTargetAtTime(bus.vehicle.sliding && speed > 6 ? 0.05 : 0, t, 0.05);
+  e.gBeep.gain.setTargetAtTime(bus.gear === -1 && (t % 0.8) < 0.4 ? 0.035 : 0, t, 0.01);
+
+  // Pneumatics: a puff on every gear change, the big "PSSHHT" when the bus
+  // comes to a stop after braking, and on the handbrake.
+  if (bus.gear !== sfx.lastGear && bus.gear > 1 && sfx.lastGear > 0) airHiss(0.035, 0.22);
+  sfx.lastGear = bus.gear;
+  if (input.brake && bus.speed > 1) sfx.braked = t;
+  if (speed < 0.4 && t - sfx.braked < 1.5 && !sfx.hissedStop) { airHiss(0.11, 0.9); sfx.hissedStop = true; }
+  if (speed > 2) sfx.hissedStop = false;
+  if (input.handbrake !== sfx.hb) { if (input.handbrake) airHiss(0.08, 0.5); sfx.hb = input.handbrake; }
 }
 let shake = 0;
 function impactFx(v) {
@@ -1163,7 +1262,8 @@ const loadbar = document.getElementById('loadbar');
 const loaderText = document.getElementById('loader-text');
 window.viewer = { camera, controls, car, vehicle, setCam, world, props,  // handy in the console
   get bus() { return bus; },
-  horn: () => ({ air: !!air, music: musicPlaying, audio: audio && audio.state }) };
+  horn: () => ({ air: !!air, music: musicPlaying, audio: audio && audio.state }),
+  sound: () => ({ engine: !!engine, audio: audio && audio.state, rate: engine && +engine.low.playbackRate.value.toFixed(2) }) };
 
 // The model ships as base64 text so any static host serves it; decode, then parse.
 const fileLoader = new THREE.FileLoader();

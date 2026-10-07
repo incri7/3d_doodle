@@ -182,10 +182,10 @@ export class Bus {
       inner = Math.sign(d) * Math.atan(BUS.wheelbase / (R - BUS.track / 2));
       outer = Math.sign(d) * Math.atan(BUS.wheelbase / (R + BUS.track / 2));
     }
-    // + steer turns toward +X, so the +X wheel (index 0) is the inner one.
-    // cannon-es steers the opposite way in this axis setup, hence the minus.
-    v.setSteeringValue(-(d > 0 ? inner : outer), 0);
-    v.setSteeringValue(-(d > 0 ? outer : inner), 1);
+    // + steer turns toward +X (the driver's left), so the +X wheel (index 0)
+    // is the inner one. Verified in the browser: A must move the bus toward +X.
+    v.setSteeringValue(d > 0 ? inner : outer, 0);
+    v.setSteeringValue(d > 0 ? outer : inner, 1);
 
     // Gear selection (automatic, with reverse on S at a standstill).
     const wantForward = input.gas > 0, wantBack = input.brake > 0;
@@ -257,7 +257,7 @@ export class Bus {
     return this.vehicle.wheelInfos.map((w, i) => ({
       name: BUS.wheels[i].name,
       spin: -w.rotation,        // + = rolling forward
-      steer: -w.steering,       // + = toward +X
+      steer: w.steering,        // + = toward +X
       // + = wheel sits lower than the modelled position (suspension extended)
       drop: (w.suspensionLength - (BUS.restLength - sag)),
       contact: w.isInContact,
