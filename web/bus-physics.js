@@ -236,6 +236,7 @@ export class Bus {
     const perWheel = BUS.mass / BUS.wheels.length;
     const brakeDemand = brake * perWheel * BUS.brakeDecel * STEP;
     this.locked = 0;
+    this.wheelLock = this.wheelLock || [];
     const coast = !drive && !brake;
     BUS.wheels.forEach((w, i) => {
       const info = v.wheelInfos[i];
@@ -247,6 +248,7 @@ export class Bus {
       const rearLocked = input.handbrake && !w.front && aspeed > 1;
       let b = lockedWheel ? info.suspensionForce * STEP * BUS.muLocked : brakeDemand;
       if (lockedWheel) this.locked++;
+      this.wheelLock[i] = lockedWheel || (rearLocked && info.isInContact);
       if (coast) b = perWheel * (G * BUS.rollRes + (this.gear > 0 ? BUS.engineBrake : 0)) * STEP;
       if (rearLocked) b = Math.max(b, info.suspensionForce * STEP * BUS.muLocked);
       // Grip: asphalt vs verge; the handbrake lets the rear step out a little.
@@ -280,6 +282,10 @@ export class Bus {
       // + = wheel sits lower than the modelled position (suspension extended)
       drop: (w.suspensionLength - (BUS.restLength - sag)),
       contact: w.isInContact,
+      // tyre sliding (locked under braking, or past its grip sideways): skid marks, smoke
+      skid: w.isInContact && ((this.wheelLock && this.wheelLock[i]) || w.skidInfo < 0.75),
+      onRoad: Math.abs(w.raycastResult.hitPointWorld.x) < BUS.roadHalfWidth,
+      contactPoint: w.raycastResult.hitPointWorld,
     }));
   }
 

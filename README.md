@@ -63,7 +63,8 @@ bash setup.sh                                  # installs Blender 5.2 as a Pytho
 
 `web/` is a small Three.js driving sandbox for the Agni coach on a Nepali
 hill road. Drive with W/A/S/D or the arrow keys (Space handbrake, hold H
-for the air horn, J for the musical pressure horn, L headlights) and switch between ten game cameras with C or 1–0:
+for the air horn, J for the musical pressure horn, L headlights, Q / E
+indicators, N time of day) and switch between ten game cameras with C or 1–0:
 chase, far chase, driver (first person, with live side mirrors), bumper,
 second person, wheel, passenger, bird's eye, TV roadside cameras and free
 orbit. A rear-view mirror inset can be toggled with M, hold B to look back,
@@ -88,6 +89,21 @@ lift at 0.52 g and the bus rolls at 0.73 g (real coaches: about 0.5-0.6 g lift);
 90-0 km/h in 39 m with locked wheels; holding full steer at 40 km/h or more,
 or a handbrake turn at 50, rolls the bus; a full swerve at 80 km/h leaves it on
 three wheels at 14 deg of lean; quick taps and half steer stay upright.
+
+Graphics: a physical (Preetham) sky drives the sun, the fog and the
+reflections, with three times of day (N, or the Day / Golden hour / Night
+buttons). The baked bus atlas gets a clearcoat on its glossy areas only, so
+the livery and chrome pick up the sky while tyres and seats stay matte. HQ mode
+(G) renders in HDR with MSAA, bloom and a light vignette, and 4096 px sun shadows;
+turn it off on slow machines. Lamps glow over the modelled ones: headlights
+and fog lamps (L), tail lamps that brighten under braking, reversing lamps,
+indicators with a ticking relay (Q / E, cancel after the turn; X hazards,
+automatic after a rollover). At night the street lamps light the road. The
+road has worn wheel tracks, patches, cracks, a roughness map and a bump map
+for the aggregate; the verges have gravel shoulders, grass tufts, rocks,
+pines and broadleaf trees and Devanagari kilometre stones. Diesel smoke
+puffs on throttle and upshifts, sliding tyres smoke and leave skid marks,
+and the verge throws dust.
 
 Hitbox: models add collision boxes with `geo.collider()`. They export as
 `COL-*` nodes in the GLB (the web viewer builds its physics shape from them)
