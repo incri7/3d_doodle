@@ -316,7 +316,8 @@ def bake_and_export(name, out_dir, size=2048, samples=32, formats=("glb", "fbx")
     baked = baked_material(images, max(strengths + [1.0]), f"MAT-{name}")
     _collapse_materials(obj, baked)
     parts = split_parts(obj)
-    _select_only([obj] + parts, obj)
+    cols = sc.colliders()
+    _select_only([obj] + parts + cols, obj)
 
     tris = sum(len(p.vertices) - 2 for o in [obj] + parts for p in o.data.polygons)
     paths = {}
@@ -326,6 +327,10 @@ def bake_and_export(name, out_dir, size=2048, samples=32, formats=("glb", "fbx")
                                   export_apply=True, export_yup=True, export_materials="EXPORT",
                                   export_image_format="AUTO", export_tangents=True)
     if "fbx" in formats:
+        # Unreal picks up UCX_<mesh>_NN boxes as the mesh's simple collision.
+        glb_names = [c.name for c in cols]
+        for i, c in enumerate(cols):
+            c.name = f"UCX_GEO-{name}_{i:02d}"
         paths["fbx"] = os.path.join(out_dir, f"{name}.fbx")
         bpy.ops.export_scene.fbx(filepath=paths["fbx"], use_selection=True, apply_unit_scale=True,
                                  apply_scale_options="FBX_SCALE_ALL", bake_space_transform=True,
@@ -333,7 +338,9 @@ def bake_and_export(name, out_dir, size=2048, samples=32, formats=("glb", "fbx")
                                  mesh_smooth_type="FACE", use_tspace=True,
                                  path_mode="COPY", embed_textures=True,
                                  axis_forward="-Z", axis_up="Y")
+        for c, n in zip(cols, glb_names):
+            c.name = n
     for k, p in paths.items():
         print(f"exported:{k} {p} {os.path.getsize(p) / 1e6:.2f}MB")
-    print(f"export_stats: tris={tris} materials={len(obj.material_slots)}")
+    print(f"export_stats: tris={tris} materials={len(obj.material_slots)} colliders={len(cols)}")
     return obj, paths, tris

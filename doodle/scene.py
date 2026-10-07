@@ -24,12 +24,18 @@ def collection(name):
     return coll
 
 
+def colliders():
+    """Collision boxes created with geo.collider()."""
+    return [o for o in bpy.context.scene.objects if o.get("doodle_collider")]
+
+
 def model_objects():
     """All mesh objects that make up the model (excludes the studio set)."""
     studio = bpy.data.collections.get("Studio")
     skip = set(studio.objects) if studio else set()
     return [o for o in bpy.context.scene.objects
-            if o.type == "MESH" and o not in skip and not o.get("doodle_cutter")]
+            if o.type == "MESH" and o not in skip and not o.get("doodle_cutter")
+            and not o.get("doodle_collider")]
 
 
 def bounds(objects=None):

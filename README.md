@@ -70,6 +70,22 @@ orbit. A rear-view mirror inset can be toggled with M, hold B to look back,
 and drag to look around. Touch screens get on-screen pedals. The road wheels
 roll and the front pair steer, and the steering wheel turns with your input.
 
+Physics: real vehicle simulation with [cannon-es](https://github.com/pmndrs/cannon-es)
+(`web/bus-physics.js`, inlined into the page by `python3 web/sync_physics.py`).
+12 t chassis with a low centre of mass and the model's hitbox, six raycast
+wheels with air-suspension, Ackermann steering, load-sensitive tyre grip (less
+on grass), a diesel torque curve through a 6-speed automatic with reverse, air
+brakes, handbrake, aero drag and rolling resistance, 90 km/h governor. Trees,
+poles, speed bumps and knock-over props (cones, drums, crates) collide. R
+resets the bus, K shows the hitbox and suspension rays. Measured in headless
+tests: 0-50 km/h 8.9 s, 90-0 km/h in 47 m, 0.62 g cornering with 2.6 deg
+of body roll, no rollover in a full-lock turn at 70 km/h.
+
+Hitbox: models add collision boxes with `geo.collider()`. They export as
+`COL-*` nodes in the GLB (the web viewer builds its physics shape from them)
+and as `UCX_GEO-<model>_NN` in the FBX, which Unreal imports as the mesh's
+simple collision automatically.
+
 Moving parts: tag objects with `geo.part(obj, "wheel_fl", pivot)` in a model;
 `export.bake_and_export()` bakes everything into one atlas, then splits each
 part into its own `PART-<name>` object with its origin at the pivot.

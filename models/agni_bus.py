@@ -79,6 +79,7 @@ def build():
     _roof(mats)
     _interior(mats)
     _tag_moving_parts()
+    _hitbox()
 
 
 # --- placement helpers ---------------------------------------------------------
@@ -698,3 +699,12 @@ def _tag_moving_parts():
             geo.part(o, f"wheel_{key}", tyre.location)
         elif n.startswith("GEO-steering_wheel"):
             geo.part(o, "steering_wheel", o.location)
+
+
+def _hitbox():
+    """Simple collision: body, roof AC pod, both rabbit-ear mirrors. Wheels are
+    handled by the vehicle physics (raycast suspension), not by boxes."""
+    geo.collider("body", (W, L, Z1 - Z0), (0, 0, (Z0 + Z1) / 2))
+    geo.collider("roof_ac", (1.7, 3.0, 0.2), (0, -1.6, Z1 + 0.09))
+    for sx, side in ((1, "l"), (-1, "r")):
+        geo.collider(f"mirror_{side}", (0.26, 0.9, 1.15), (sx * 1.38, YF - 0.15, 2.83))

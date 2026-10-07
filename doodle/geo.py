@@ -163,6 +163,17 @@ def tube(name, points, radius=0.02, location=(0, 0, 0), resolution=8, coll=None)
     return _link(obj, coll)
 
 
+def collider(name, size, location, rotation=(0, 0, 0), coll=None):
+    """Collision box (hitbox). Not rendered or baked; exported as COL-<name>
+    in GLB and as UCX_ (Unreal auto-collision) in FBX."""
+    obj = box(f"COL-{name}", size, location, coll)
+    obj.rotation_euler = rotation
+    obj["doodle_collider"] = True
+    obj.hide_render = True
+    obj.display_type = "WIRE"
+    return obj
+
+
 def part(obj, name, pivot):
     """Tag `obj` as belonging to a moving part (e.g. "wheel_fl"). export keeps
     each part as its own object with its origin at `pivot` (world coords)."""

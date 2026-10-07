@@ -72,8 +72,13 @@
   .speedo .unit { font: 500 12px/1 var(--display); letter-spacing: .12em; color: var(--muted); text-transform: uppercase; }
   .speedo .gear { grid-column: 1 / -1; display: flex; gap: 8px; margin-top: 6px; font: 500 13px/1 var(--display); letter-spacing: .08em; color: var(--muted); }
   .speedo .gear .on { color: var(--sodium); }
-  .speedo .bar { grid-column: 1 / -1; height: 3px; margin-top: 6px; background: var(--line); border-radius: 2px; overflow: hidden; }
-  .speedo .bar i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--sodium), var(--agni)); }
+  .speedo .tach { grid-column: 1 / -1; position: relative; height: 5px; margin-top: 7px; background: var(--line); border-radius: 3px; overflow: hidden; }
+  .speedo .tach i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--sodium), var(--agni)); }
+  .speedo .tach .redline { position: absolute; top: 0; bottom: 0; left: 88%; right: 0; background: rgba(224, 50, 47, .35); }
+  .speedo .gear #g-hb:not(.on), .speedo .gear #g-horn:not(.on) { display: none; }   /* show only while active */
+  .speedo .gear #g-hb.on { color: var(--agni); }
+  .speedo .gearnum { color: var(--sodium); font-weight: 700; font-size: 18px; line-height: 13px; min-width: 14px; }
+  .reset-tip { position: fixed; left: 50%; top: 40%; transform: translate(-50%, -50%); padding: 10px 16px; font: 500 16px/1.2 var(--display); letter-spacing: .06em; text-transform: uppercase; pointer-events: none; }
 
   .horns { display: flex; flex-direction: column; gap: 6px; }
   .hornbtn { font: 700 14px/1 var(--display); letter-spacing: .1em; color: var(--fg); cursor: pointer;
@@ -133,6 +138,8 @@
         <label class="toggle"><input type="checkbox" id="t-mirror" checked><span>Rear-view mirror</span></label>
         <label class="toggle"><input type="checkbox" id="t-head"><span>Headlights</span></label>
         <label class="toggle"><input type="checkbox" id="t-cabin" checked><span>Cabin lights</span></label>
+        <label class="toggle"><input type="checkbox" id="t-engine" checked><span>Engine sound</span></label>
+        <label class="toggle"><input type="checkbox" id="t-hitbox"><span>Hitbox</span></label>
       </div>
     </div>
     <div class="horns">
@@ -143,8 +150,8 @@
     </div>
     <div class="speedo plate" aria-live="off">
       <div class="kmh" id="kmh">0</div><div class="unit">km/h</div>
-      <div class="bar"><i id="speedbar"></i></div>
-      <div class="gear"><span id="g-r">R</span><span id="g-n" class="on">N</span><span id="g-d">D</span><span id="g-hb">· Handbrake</span><span id="g-horn" class="horn-lamp">· Horn</span></div>
+      <div class="tach" title="Engine speed"><i id="rpmbar"></i><b class="redline"></b></div>
+      <div class="gear"><span class="gearnum" id="gearnum">N</span><span id="rpmnum">650 rpm</span><span id="g-hb">Handbrake</span><span id="g-horn" class="horn-lamp">Horn</span></div>
     </div>
   </div>
 </div>
@@ -162,9 +169,12 @@
     <dt>Hold H</dt><dd>Air horn (as long as you hold)</dd>
     <dt>J</dt><dd>Musical pressure horn</dd>
     <dt>M · L</dt><dd>Mirror · headlights</dd>
+    <dt>R · K</dt><dd>Reset the bus · show hitbox</dd>
   </dl>
-  <p>Click the scene first so it receives your keys.</p>
+  <p>Click the scene first so it receives your keys. Knock over the cones, drums and crates down the road; mind the speed bumps.</p>
 </div>
+
+<div class="reset-tip plate" id="reset-tip" hidden>Press R to put the bus back on its wheels</div>
 
 <div class="touch" id="touch" hidden>
   <div class="pad"><button data-k="left" aria-label="Steer left">◀</button><button data-k="right" aria-label="Steer right">▶</button></div>
@@ -174,7 +184,8 @@
 <script type="importmap">
 { "imports": {
   "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
-  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/",
+  "cannon-es": "https://cdn.jsdelivr.net/npm/cannon-es@0.20.0/dist/cannon-es.js"
 } }
 </script>
 <script type="module">
@@ -182,6 +193,280 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import * as CANNON from 'cannon-es';
+
+/* @@bus-physics:start (generated from web/bus-physics.js by web/sync_physics.py; edit that file) */
+// Agni coach vehicle physics (cannon-es). Pure simulation, no rendering, so
+// the same code runs in the browser and in headless tuning tests.
+//
+// Frame: the bus's own space matches the glTF model. +Z forward, +Y up,
+// +X the door side (the driver's left; Nepal drives on the left), origin on
+// the ground under the middle of the bus.
+
+const G = 9.81;
+const STEP = 1 / 120;          // physics sub-step (s)
+
+const BUS = {
+  mass: 12000,                          // kg, laden 11 m coach
+  com: [0, 1.15, -0.2],                 // centre of mass in bus space (m)
+  wheelRadius: 0.53,
+  restLength: 0.32,                     // suspension
+  stiffness: 28,                        // per kg of chassis: sag = g / (6 * k) = 5.8 cm (air suspension)
+  dampRelax: 3.0, dampComp: 4.2,
+  travel: 0.2,
+  rollInfluence: 0.75,                  // lower = less body roll (anti-roll bars)
+  wheels: [                             // centres in bus space
+    { name: 'wheel_fl',  x:  1.00, z:  3.15, front: true },
+    { name: 'wheel_fr',  x: -1.00, z:  3.15, front: true },
+    { name: 'wheel_ril', x:  0.78, z: -2.65, drive: true },
+    { name: 'wheel_rir', x: -0.78, z: -2.65, drive: true },
+    { name: 'wheel_rol', x:  1.10, z: -2.65, drive: true },
+    { name: 'wheel_ror', x: -1.10, z: -2.65, drive: true },
+  ],
+  wheelbase: 5.8, track: 2.0,
+  idle: 650, redline: 2500, peakTorque: 1150,   // Nm, 6-cylinder diesel
+  gears: [6.2, 3.9, 2.55, 1.75, 1.28, 1.0], reverse: 5.8, final: 4.3, efficiency: 0.86,
+  upshift: 2000, downshift: 1050, shiftTime: 0.45,
+  governor: 25,                         // m/s, 90 km/h speed limiter
+  brakeDecel: 6.5,                      // m/s^2 service brake
+  handbrakeDecel: 7.5,
+  engineBrake: 0.45,                    // m/s^2 when coasting in gear
+  cdA: 0.62 * 7.6,                      // drag coefficient x frontal area (m^2)
+  rollRes: 0.009,
+  maxSteer: 0.62, steerRate: 1.5, highSpeedSteer: 0.14,
+  grip: { road: 1.2, offroad: 0.78 },   // tyre friction (frictionSlip)
+  roadHalfWidth: 5,                     // the road runs along world Z at x = 0
+};
+
+/** Torque curve: a fat diesel mid-range that falls away near the redline. */
+function torqueAt(rpm) {
+  const { idle, peakTorque: T } = BUS;
+  if (rpm < idle) return 0.55 * T;
+  if (rpm < 1150) return T * (0.62 + 0.38 * (rpm - idle) / (1150 - idle));
+  if (rpm < 1750) return T;
+  return T * Math.max(0.15, 1 - 0.55 * (rpm - 1750) / 750);
+}
+
+function createWorld() {
+  const world = new CANNON.World({ gravity: new CANNON.Vec3(0, -G, 0) });
+  world.broadphase = new CANNON.SAPBroadphase(world);
+  world.allowSleep = true;
+  world.defaultContactMaterial.friction = 0.45;
+  world.defaultContactMaterial.restitution = 0.15;
+  world.solver.iterations = 12;
+  // A huge flat box rather than CANNON.Plane: SAPBroadphase mishandles the
+  // plane's infinite bounds in ray queries, so suspension rays miss it.
+  const ground = new CANNON.Body({ mass: 0, shape: new CANNON.Box(new CANNON.Vec3(4000, 1, 4000)) });
+  ground.position.set(0, -1, 0);
+  world.addBody(ground);
+  world.ground = ground;
+  return world;
+}
+
+function staticBox(world, half, pos, yaw = 0) {
+  const b = new CANNON.Body({ mass: 0, shape: new CANNON.Box(new CANNON.Vec3(...half)) });
+  b.position.set(...pos);
+  b.quaternion.setFromEuler(0, yaw, 0);
+  world.addBody(b);
+  return b;
+}
+
+function staticCylinder(world, r, h, pos) {
+  const b = new CANNON.Body({ mass: 0, shape: new CANNON.Cylinder(r, r, h, 8) });
+  b.position.set(...pos);
+  world.addBody(b);
+  return b;
+}
+
+function dynamicBody(world, shape, mass, pos, opts = {}) {
+  const b = new CANNON.Body({ mass, shape, linearDamping: 0.05, angularDamping: 0.1, ...opts });
+  b.position.set(...pos);
+  b.sleepSpeedLimit = 0.2;
+  world.addBody(b);
+  return b;
+}
+
+/**
+ * colliders: [{ half: [x, y, z], pos: [x, y, z], quat: [x, y, z, w] }] boxes in
+ * bus space (from the model's COL-* nodes).
+ */
+class Bus {
+  constructor(world, colliders) {
+    const com = new CANNON.Vec3(...BUS.com);
+    this.com = com;
+    const chassis = new CANNON.Body({ mass: BUS.mass, angularDamping: 0.12, linearDamping: 0.002 });
+    for (const c of colliders) {
+      const off = new CANNON.Vec3(c.pos[0] - com.x, c.pos[1] - com.y, c.pos[2] - com.z);
+      chassis.addShape(new CANNON.Box(new CANNON.Vec3(...c.half)), off, new CANNON.Quaternion(...c.quat));
+    }
+    // A long bus is far stiffer in yaw/pitch than a uniform box of its hull.
+    chassis.updateMassProperties();
+    chassis.allowSleep = false;
+    this.chassis = chassis;
+
+    const vehicle = new CANNON.RaycastVehicle({ chassisBody: chassis, indexRightAxis: 0, indexUpAxis: 1, indexForwardAxis: 2 });
+    const sag = G / (BUS.wheels.length * BUS.stiffness);
+    for (const w of BUS.wheels) {
+      vehicle.addWheel({
+        radius: BUS.wheelRadius,
+        directionLocal: new CANNON.Vec3(0, -1, 0),
+        axleLocal: new CANNON.Vec3(1, 0, 0),
+        suspensionStiffness: BUS.stiffness,
+        suspensionRestLength: BUS.restLength,
+        dampingRelaxation: BUS.dampRelax,
+        dampingCompression: BUS.dampComp,
+        maxSuspensionForce: BUS.mass * G * 3,
+        maxSuspensionTravel: BUS.travel,
+        rollInfluence: BUS.rollInfluence,
+        frictionSlip: BUS.grip.road,
+        useCustomSlidingRotationalSpeed: true,
+        customSlidingRotationalSpeed: -30,
+        chassisConnectionPointLocal: new CANNON.Vec3(
+          w.x - com.x, BUS.wheelRadius + BUS.restLength - sag - com.y, w.z - com.z),
+      });
+    }
+    vehicle.addToWorld(world);
+    this.vehicle = vehicle;
+    this.world = world;
+
+    this.gear = 0;            // 0 neutral, 1..6 forward, -1 reverse
+    this.shiftTimer = 0;
+    this.rpm = BUS.idle;
+    this.steer = 0;           // road-wheel angle (rad), + turns toward +X
+    this.speed = 0;           // forward speed (m/s), negative when reversing
+    this.throttle = 0;
+    this.braking = false;
+    this.impact = 0;          // last hard-impact speed, for sound/camera shake
+    chassis.addEventListener('collide', e => {
+      const v = Math.abs(e.contact.getImpactVelocityAlongNormal());
+      if (v > this.impact) this.impact = v;
+    });
+    this.reset(0, 0, 0);
+  }
+
+  /** Place the bus upright at (x, z) facing `heading` (0 = +Z), at rest. */
+  reset(x, z, heading) {
+    const c = this.chassis;
+    const q = new CANNON.Quaternion().setFromEuler(0, heading, 0);
+    const comWorld = q.vmult(this.com);
+    c.position.set(x + comWorld.x, comWorld.y + 0.05, z + comWorld.z);
+    c.quaternion.copy(q);
+    c.velocity.setZero(); c.angularVelocity.setZero();
+    this.gear = 0; this.rpm = BUS.idle; this.steer = 0;
+  }
+
+  forward() { return this.chassis.quaternion.vmult(new CANNON.Vec3(0, 0, 1)); }
+  heading() { const f = this.forward(); return Math.atan2(f.x, f.z); }
+  upright() { return this.chassis.quaternion.vmult(new CANNON.Vec3(0, 1, 0)).y; }
+
+  /** Advance driver inputs and forces by dt (call before world.step).
+   *  input: { gas: 0..1, brake: 0..1, steer: -1..1 (+ = toward +X), handbrake } */
+  update(dt, input) {
+    const c = this.chassis, v = this.vehicle;
+    const fwd = this.forward();
+    this.speed = c.velocity.dot(fwd);
+    const speed = this.speed, aspeed = Math.abs(speed);
+
+    // Steering: rate-limited, less lock at speed, Ackermann geometry.
+    const lock = Math.max(BUS.highSpeedSteer, BUS.maxSteer / (1 + aspeed * 0.085));
+    const target = THREEish.clamp(input.steer, -1, 1) * lock;
+    const maxDelta = BUS.steerRate * dt;
+    this.steer += THREEish.clamp(target - this.steer, -maxDelta, maxDelta);
+    const d = this.steer;
+    let inner = d, outer = d;
+    if (Math.abs(d) > 1e-4) {
+      const R = BUS.wheelbase / Math.tan(Math.abs(d));
+      inner = Math.sign(d) * Math.atan(BUS.wheelbase / (R - BUS.track / 2));
+      outer = Math.sign(d) * Math.atan(BUS.wheelbase / (R + BUS.track / 2));
+    }
+    // + steer turns toward +X, so the +X wheel (index 0) is the inner one.
+    // cannon-es steers the opposite way in this axis setup, hence the minus.
+    v.setSteeringValue(-(d > 0 ? inner : outer), 0);
+    v.setSteeringValue(-(d > 0 ? outer : inner), 1);
+
+    // Gear selection (automatic, with reverse on S at a standstill).
+    const wantForward = input.gas > 0, wantBack = input.brake > 0;
+    let brake = 0, drive = 0;
+    if (wantForward) {
+      if (this.gear === -1 && speed < -0.6) brake = 1;          // rolling back: W brakes first
+      else { if (this.gear <= 0) this.gear = 1; drive = input.gas; }
+    } else if (wantBack) {
+      if (speed > 0.6) brake = input.brake;                     // moving forward: S brakes
+      else { this.gear = -1; drive = input.brake; }
+    } else if (aspeed < 0.3 && this.gear > 0) this.gear = 0;
+    this.braking = brake > 0;
+
+    // Engine speed follows the wheels; the clutch slips below ~idle road speed.
+    const ratio = this.gear === -1 ? BUS.reverse : this.gear > 0 ? BUS.gears[this.gear - 1] : 0;
+    const wheelRpm = aspeed / BUS.wheelRadius * 60 / (2 * Math.PI);
+    let rpm = ratio ? wheelRpm * ratio * BUS.final : BUS.idle;
+    if (rpm < BUS.idle + drive * 900) rpm = BUS.idle + drive * 900 * (ratio ? 1 : 0.6);
+    this.rpm += (Math.min(rpm, BUS.redline + 150) - this.rpm) * Math.min(1, dt * 10);
+
+    // Automatic shifts with a short torque cut.
+    this.shiftTimer = Math.max(0, this.shiftTimer - dt);
+    if (this.gear > 0 && this.shiftTimer === 0) {
+      if (this.rpm > BUS.upshift && this.gear < BUS.gears.length && drive > 0) { this.gear++; this.shiftTimer = BUS.shiftTime; }
+      else if (this.rpm < BUS.downshift && this.gear > 1) { this.gear--; this.shiftTimer = BUS.shiftTime * 0.6; }
+    }
+
+    // Wheel force from torque through the driveline, split over the driven wheels.
+    let force = 0;
+    if (drive > 0 && ratio && this.shiftTimer === 0) {
+      force = torqueAt(this.rpm) * ratio * BUS.final * BUS.efficiency / BUS.wheelRadius * drive;
+      if (this.gear > 0 && speed > BUS.governor) force = 0;                // speed limiter
+      if (this.gear === -1 && speed < -4.5) force = 0;                     // reverse limit ~16 km/h
+      if (this.rpm >= BUS.redline) force *= 0.2;
+      if (this.gear === -1) force = -force;
+    }
+    const driven = BUS.wheels.filter(w => w.drive).length;
+
+    // Brakes act as an impulse cap per sub-step; split evenly over all six wheels.
+    const perWheel = BUS.mass / BUS.wheels.length;
+    let brakeImpulse = brake * perWheel * BUS.brakeDecel * STEP;
+    const coast = !drive && !brake;
+    BUS.wheels.forEach((w, i) => {
+      const info = v.wheelInfos[i];
+      let b = brakeImpulse;
+      if (coast) b = perWheel * (G * BUS.rollRes + (this.gear > 0 ? BUS.engineBrake : 0)) * STEP;
+      if (input.handbrake && !w.front) b = Math.max(b, perWheel * 1.5 * BUS.handbrakeDecel * STEP);
+      // Grip: asphalt vs verge; the handbrake lets the rear step out a little.
+      const p = info.raycastResult.hitPointWorld;
+      const onRoad = info.isInContact && Math.abs(p.x) < BUS.roadHalfWidth;
+      info.frictionSlip = (onRoad ? BUS.grip.road : BUS.grip.offroad) * (input.handbrake && !w.front ? 0.6 : 1);
+      if (!onRoad && info.isInContact && coast) b *= 2.5;
+      // cannon-es pushes along -forward for positive force in this axis setup
+      v.applyEngineForce(w.drive ? -force / driven : 0, i);
+      v.setBrake(force ? 0 : b, i);
+    });
+
+    // Aerodynamic drag on the body.
+    const vel = c.velocity, sp = vel.length();
+    if (sp > 0.1) {
+      const k = -0.5 * 1.2 * BUS.cdA * sp;
+      c.applyForce(new CANNON.Vec3(vel.x * k, vel.y * k, vel.z * k), c.position);
+    }
+  }
+
+  /** Per-wheel state for animating the model: spin angle, steer, centre drop. */
+  wheelStates() {
+    const sag = G / (BUS.wheels.length * BUS.stiffness);
+    return this.vehicle.wheelInfos.map((w, i) => ({
+      name: BUS.wheels[i].name,
+      spin: -w.rotation,        // + = rolling forward
+      steer: -w.steering,       // + = toward +X
+      // + = wheel sits lower than the modelled position (suspension extended)
+      drop: (w.suspensionLength - (BUS.restLength - sag)),
+      contact: w.isInContact,
+    }));
+  }
+
+  get kmh() { return this.speed * 3.6; }
+  get gearLabel() { return this.gear === -1 ? 'R' : this.gear === 0 ? 'N' : String(this.gear); }
+}
+
+const THREEish = { clamp: (x, a, b) => Math.max(a, Math.min(b, x)) };
+/* @@bus-physics:end */
 
 const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const canvas = document.getElementById('stage');
@@ -310,15 +595,16 @@ for (const x of [-1.08, 1.08]) {
 headlights.visible = false;
 body.add(headlights);
 
-const car = { speed: 0, steer: 0, heading: 0, throttle: 0, roll: 0, pitch: 0, handbrake: false };
-const WHEELBASE = 5.8, MAX_FWD = 27, MAX_REV = 6, MAX_STEER = 0.6;
+// Mirror of the physics state for cameras and HUD.
+const car = { speed: 0, steer: 0, heading: 0, handbrake: false };
 
 // ---------------------------------------------------------------- input
 const keys = new Set();
 const touch = { left: false, right: false, gas: false, brake: false };
 const held = (...k) => k.some(x => keys.has(x));
 addEventListener('keydown', e => {
-  if (e.target.closest && e.target.closest('input')) return;
+  // Only text fields swallow keys; checkboxes and buttons must not block driving.
+  if (e.target.matches && e.target.matches('input[type="text"], textarea')) return;
   const k = e.key.toLowerCase();
   if ([' ', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(k)) e.preventDefault();
   if (e.repeat) { keys.add(k); return; }
@@ -330,6 +616,8 @@ addEventListener('keydown', e => {
   if (k === 'l') toggle('t-head');
   if (k === 'h') hornOn('key');
   if (k === 'j') musicHorn();
+  if (k === 'r') resetBus();
+  if (k === 'k') toggle('t-hitbox');
 });
 addEventListener('keyup', e => {
   const k = e.key.toLowerCase();
@@ -551,7 +839,7 @@ function updateCamera(dt) {
     const busPos = vehicle.position;
     tmpA.subVectors(busPos, lastBus);       // carry the orbit along with the bus
     camera.position.add(tmpA); controls.target.add(tmpA);
-    controls.autoRotate = car.speed === 0 && !reduceMotion;
+    controls.autoRotate = Math.abs(car.speed) < 0.1 && !reduceMotion;
     controls.autoRotateSpeed = 0.5;
     controls.update();
   } else if (cam.id === 'top') {
@@ -598,6 +886,11 @@ function updateCamera(dt) {
     camera.lookAt(lookAt);
   }
   if (cam.id !== 'tv' && cam.fov) camera.fov += ((cam.fov + (cam.id === 'chase' ? Math.abs(car.speed) * 0.35 : 0)) - camera.fov) * (snap ? 1 : 0.1);
+  if (shake > 0.001 && !reduceMotion) {           // impact shake, decays fast
+    camera.position.x += (Math.random() - 0.5) * shake;
+    camera.position.y += (Math.random() - 0.5) * shake;
+    shake *= Math.exp(-dt * 9);
+  }
   camera.updateProjectionMatrix();
   lastBus.copy(vehicle.position);
   snap = false;
@@ -659,64 +952,218 @@ helpBtn.addEventListener('click', () => {
   help.hidden = !help.hidden; helpPinned = !help.hidden;
   helpBtn.setAttribute('aria-expanded', String(!help.hidden));
 });
+document.querySelectorAll('.toggles input').forEach(el => el.addEventListener('change', () => canvas.focus()));
 document.getElementById('t-head').addEventListener('change', e => { headlights.visible = e.target.checked; });
 document.getElementById('t-cabin').addEventListener('change', e => { cabinLights.visible = e.target.checked; });
 
+// ---------------------------------------------------------------- physics world
+const world = createWorld();
+// Trees and poles are solid. Trunk colliders use the same seeded layout.
+{
+  const m = new THREE.Matrix4(), pos = new THREE.Vector3(), quat = new THREE.Quaternion(), scl = new THREE.Vector3();
+  for (let i = 0; i < TREES; i++) {
+    trunks.getMatrixAt(i, m); m.decompose(pos, quat, scl);
+    staticCylinder(world, 0.32 * scl.x, 2.4 * scl.y, [pos.x, pos.y, pos.z]);
+  }
+  for (let i = 0; i < POLES; i++) { poles.getMatrixAt(i, m); m.decompose(pos, quat, scl); staticBox(world, [0.11, 4.5, 0.11], [pos.x, pos.y, pos.z]); }
+}
+// Speed bumps across the road.
+const bumpMat = new THREE.MeshStandardMaterial({ color: 0xe9c34a, roughness: 0.8 });
+for (const z of [150, 162, 174]) {
+  const bump = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.35, ROAD_W, 20), bumpMat);
+  bump.rotation.z = Math.PI / 2;                 // lies across the road, 12 cm proud
+  bump.position.set(0, -0.23, z);
+  bump.receiveShadow = true;
+  scene.add(bump);
+  const b = new CANNON.Body({ mass: 0, shape: new CANNON.Cylinder(0.35, 0.35, ROAD_W, 12) });
+  b.quaternion.setFromEuler(0, 0, Math.PI / 2);
+  b.position.set(0, -0.23, z);
+  world.addBody(b);
+}
+// Loose props to knock over: traffic cones, oil drums, a crate stack.
+const props = [];
+function addProp(mesh, body) { mesh.castShadow = mesh.receiveShadow = true; scene.add(mesh); props.push({ mesh, body }); }
+const coneGeo = new THREE.ConeGeometry(0.2, 0.7, 16), coneMat = new THREE.MeshStandardMaterial({ color: 0xff6a13, roughness: 0.6 });
+for (let i = 0; i < 12; i++) {
+  const x = (i % 2 ? 1 : -1) * 0.9, z = 40 + i * 9;   // slalom inside the bus's track
+  addProp(new THREE.Mesh(coneGeo, coneMat), dynamicBody(world, new CANNON.Cylinder(0.04, 0.2, 0.7, 10), 4, [x, 0.36, z]));
+}
+const drumGeo = new THREE.CylinderGeometry(0.29, 0.29, 0.88, 20), drumMat = new THREE.MeshStandardMaterial({ color: 0x1f4fa8, roughness: 0.45, metalness: 0.5 });
+for (let i = 0; i < 9; i++) {
+  addProp(new THREE.Mesh(drumGeo, drumMat), dynamicBody(world, new CANNON.Cylinder(0.29, 0.29, 0.88, 12), 28, [2.2 + (i % 3) * 0.62, 0.45, 125 + Math.floor(i / 3) * 0.62]));
+}
+const crateGeo = new THREE.BoxGeometry(0.9, 0.9, 0.9), crateMat = new THREE.MeshStandardMaterial({ color: 0x9a6b3d, roughness: 0.85 });
+for (let row = 0; row < 3; row++) for (let i = 0; i < 4 - row; i++) {
+  addProp(new THREE.Mesh(crateGeo, crateMat),
+    dynamicBody(world, new CANNON.Box(new CANNON.Vec3(0.45, 0.45, 0.45)), 35, [-3 + i * 0.92 + row * 0.46, 0.45 + row * 0.9, 210]));
+}
+
 // ---------------------------------------------------------------- driving
-const kmhEl = document.getElementById('kmh'), barEl = document.getElementById('speedbar');
-const gears = { r: document.getElementById('g-r'), n: document.getElementById('g-n'), d: document.getElementById('g-d'), hb: document.getElementById('g-hb') };
+const kmhEl = document.getElementById('kmh'), rpmBar = document.getElementById('rpmbar');
+const gearEl = document.getElementById('gearnum'), rpmEl = document.getElementById('rpmnum');
+const hbEl = document.getElementById('g-hb'), resetTip = document.getElementById('reset-tip');
+let bus = null, accumulator = 0;
+const comLocal = new THREE.Vector3(...BUS.com);
+
+function resetBus() {
+  if (!bus) return;
+  const h = bus.heading();
+  bus.reset(vehicle.position.x, vehicle.position.z, h);
+}
+
 function drive(dt) {
-  if (!(dt > 0)) return;
+  if (!bus || !(dt > 0)) return;
   const gas = held('w', 'arrowup') || touch.gas;
   const brake = held('s', 'arrowdown') || touch.brake;
   const left = held('a', 'arrowleft') || touch.left, right = held('d', 'arrowright') || touch.right;
   car.handbrake = keys.has(' ');
-
-  let acc = 0;
   if (gas && !help.hidden && !helpPinned) { help.hidden = true; helpBtn.setAttribute('aria-expanded', 'false'); }
-  if (gas) acc = car.speed >= -0.5 ? 3.2 * (1 - car.speed / MAX_FWD) : 9;
-  if (brake) acc = car.speed > 0.5 ? -9 : -2.2 * (1 + car.speed / MAX_REV);
-  if (!gas && !brake) acc = -Math.sign(car.speed) * Math.min(Math.abs(car.speed) / dt, 0.6 + 0.0025 * car.speed * car.speed);
-  if (car.handbrake) acc = -Math.sign(car.speed) * Math.min(Math.abs(car.speed) / dt, 12);
-  car.speed = THREE.MathUtils.clamp(car.speed + acc * dt, -MAX_REV, MAX_FWD);
+  const input = { gas: gas ? 1 : 0, brake: brake ? 1 : 0, steer: (left ? 1 : 0) - (right ? 1 : 0), handbrake: car.handbrake };
 
-  const target = ((left ? 1 : 0) - (right ? 1 : 0)) * MAX_STEER / (1 + Math.abs(car.speed) * 0.06);
-  car.steer += (target - car.steer) * Math.min(1, dt * 4);
-  const yawRate = car.speed * Math.tan(car.steer) / WHEELBASE;
-  car.heading += yawRate * dt;
-  vehicle.rotation.y = car.heading;
-  vehicle.position.x += Math.sin(car.heading) * car.speed * dt;
-  vehicle.position.z += Math.cos(car.heading) * car.speed * dt;
+  // Fixed 120 Hz physics, independent of frame rate.
+  accumulator += dt;
+  let n = 0;
+  while (accumulator >= STEP && n < 10) { bus.update(STEP, input); world.step(STEP); accumulator -= STEP; n++; }
+  if (n === 10) accumulator = 0;
 
-  // Body lean: roll out of turns, pitch under braking and acceleration.
-  car.roll += (THREE.MathUtils.clamp(-yawRate * car.speed * 0.012, -0.06, 0.06) - car.roll) * Math.min(1, dt * 3);
-  car.pitch += (THREE.MathUtils.clamp(-acc * 0.004, -0.03, 0.03) - car.pitch) * Math.min(1, dt * 3);
-  body.rotation.set(car.pitch, 0, car.roll);
+  // Body pose from the chassis (whose origin is the centre of mass).
+  const c = bus.chassis;
+  vehicle.quaternion.set(c.quaternion.x, c.quaternion.y, c.quaternion.z, c.quaternion.w);
+  vehicle.position.set(c.position.x, c.position.y, c.position.z).sub(comLocal.clone().applyQuaternion(vehicle.quaternion));
+  car.speed = bus.speed; car.heading = bus.heading(); car.steer = bus.steer;
 
-  const kmh = Math.round(Math.abs(car.speed) * 3.6);
-  kmhEl.textContent = kmh;
-  barEl.style.width = Math.min(100, kmh / (MAX_FWD * 3.6) * 100) + '%';
-  const g = car.speed < -0.3 ? 'r' : car.speed > 0.3 ? 'd' : 'n';
-  for (const key of ['r', 'n', 'd']) gears[key].classList.toggle('on', key === g);
-  gears.hb.classList.toggle('on', car.handbrake);
+  // Wheels: spin, steer and suspension travel straight from the simulation.
+  for (const ws of bus.wheelStates()) {
+    const w = parts.byName[ws.name];
+    if (!w) continue;
+    w.node.position.y = w.base.y - ws.drop;
+    w.node.rotation.set(ws.spin % (Math.PI * 2), ws.steer, 0);
+  }
+  if (parts.steering) parts.steering.quaternion.setFromAxisAngle(STEER_AXIS, -bus.steer * STEER_RATIO);
+  for (const p of props) { p.mesh.position.copy(p.body.position); p.mesh.quaternion.copy(p.body.quaternion); }
 
-  // Roll the wheels with road speed, steer the front pair, turn the steering wheel.
-  wheelSpin = (wheelSpin + car.speed / TYRE_R * dt) % (Math.PI * 2);
-  for (const w of parts.wheels) w.node.rotation.set(wheelSpin, w.front ? car.steer : 0, 0);
-  if (parts.steering) parts.steering.quaternion.setFromAxisAngle(STEER_AXIS, -car.steer * STEER_RATIO);
+  // HUD
+  kmhEl.textContent = Math.round(Math.abs(bus.kmh));
+  gearEl.textContent = bus.gear > 0 ? 'D' + bus.gear : bus.gearLabel;
+  rpmEl.textContent = Math.round(bus.rpm / 10) * 10 + ' rpm';
+  rpmBar.style.width = Math.min(100, bus.rpm / 2650 * 100) + '%';
+  hbEl.classList.toggle('on', car.handbrake);
+  resetTip.hidden = bus.upright() > 0.55;
+
+  // Impacts: thud + camera shake, scaled by impact speed.
+  if (bus.impact > 1.5) { impactFx(bus.impact); }
+  bus.impact = 0;
+  engineSound(input);
+  updateHitbox();
 
   sun.position.copy(vehicle.position).add(SUN_OFFSET);
   sun.target.position.copy(vehicle.position);
 }
 
+// ---------------------------------------------------------------- engine, tyres, impacts (sound)
+let engine = null;
+function engineSound(input) {
+  const on = document.getElementById('t-engine').checked && audio;
+  if (!on) { if (engine) { engine.gain.gain.value = 0; engine.tyre.gain.value = 0; } return; }
+  if (!engine) {
+    const ctx = audio;
+    const gain = ctx.createGain(); gain.gain.value = 0;
+    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.Q.value = 1.2;
+    const o1 = ctx.createOscillator(), o2 = ctx.createOscillator();
+    o1.type = 'sawtooth'; o2.type = 'square';
+    const g2 = ctx.createGain(); g2.gain.value = 0.35;
+    o1.connect(lp); o2.connect(g2).connect(lp); lp.connect(gain).connect(ctx.destination);
+    // tyre squeal: filtered noise
+    const len = ctx.sampleRate, buf = ctx.createBuffer(1, len, ctx.sampleRate), d = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+    const noise = ctx.createBufferSource(); noise.buffer = buf; noise.loop = true;
+    const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 1700; bp.Q.value = 6;
+    const tyre = ctx.createGain(); tyre.gain.value = 0;
+    noise.connect(bp).connect(tyre).connect(ctx.destination);
+    o1.start(); o2.start(); noise.start();
+    engine = { gain, lp, o1, o2, tyre };
+  }
+  const t = audio.currentTime, f = bus.rpm / 20;           // 6-cylinder firing frequency
+  engine.o1.frequency.setTargetAtTime(f, t, 0.05);
+  engine.o2.frequency.setTargetAtTime(f * 0.5, t, 0.05);
+  const load = input.gas || input.brake && bus.gear === -1 ? 1 : 0;
+  engine.lp.frequency.setTargetAtTime(220 + load * 500 + bus.rpm * 0.15, t, 0.08);
+  engine.gain.gain.setTargetAtTime(0.05 + load * 0.07, t, 0.1);
+  const sliding = bus.vehicle.sliding && Math.abs(bus.speed) > 6;
+  engine.tyre.gain.setTargetAtTime(sliding ? 0.05 : 0, t, 0.05);
+}
+let shake = 0;
+function impactFx(v) {
+  shake = Math.min(0.5, shake + v * 0.025);
+  if (!audio) return;
+  const ctx = audio, t = ctx.currentTime;
+  const o = ctx.createOscillator(), g = ctx.createGain();
+  o.type = 'sine'; o.frequency.setValueAtTime(90, t); o.frequency.exponentialRampToValueAtTime(35, t + 0.25);
+  g.gain.setValueAtTime(Math.min(0.6, v * 0.04), t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.35);
+  o.connect(g).connect(ctx.destination); o.start(t); o.stop(t + 0.4);
+}
+// Any key or click unlocks audio so the engine can idle.
+addEventListener('pointerdown', () => { try { audioCtx(); } catch {} }, { once: true });
+addEventListener('keydown', () => { try { audioCtx(); } catch {} }, { once: true });
+
+// ---------------------------------------------------------------- hitbox debug view
+const hitbox = new THREE.Group();
+hitbox.visible = false;
+scene.add(hitbox);
+const hitMat = new THREE.LineBasicMaterial({ color: 0x39ff88, depthTest: false, transparent: true });
+const rayMat = new THREE.LineBasicMaterial({ color: 0xffd23f, depthTest: false, transparent: true });
+let hitBusGroup = null, wheelRays = [], propWires = [];
+function buildHitbox(colliders) {
+  hitBusGroup = new THREE.Group();
+  for (const c of colliders) {
+    const box = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(c.half[0] * 2, c.half[1] * 2, c.half[2] * 2)), hitMat);
+    box.position.set(...c.pos);
+    box.renderOrder = 10;
+    hitBusGroup.add(box);
+  }
+  vehicle.add(hitBusGroup);
+  hitBusGroup.visible = false;
+  for (let i = 0; i < BUS.wheels.length; i++) {
+    const g = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]);
+    const line = new THREE.Line(g, rayMat); line.renderOrder = 10; line.frustumCulled = false;
+    const ring = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.CylinderGeometry(BUS.wheelRadius, BUS.wheelRadius, 0.05, 20)), rayMat);
+    ring.renderOrder = 10;
+    hitbox.add(line, ring);
+    wheelRays.push({ line, ring });
+  }
+  for (const p of props) {
+    const g = p.body.shapes[0] instanceof CANNON.Box ? new THREE.BoxGeometry(0.9, 0.9, 0.9) : p.mesh.geometry;
+    const w = new THREE.LineSegments(new THREE.EdgesGeometry(g), hitMat); w.renderOrder = 10;
+    hitbox.add(w); propWires.push({ w, p });
+  }
+}
+document.getElementById('t-hitbox').addEventListener('change', e => {
+  hitbox.visible = e.target.checked;
+  if (hitBusGroup) hitBusGroup.visible = e.target.checked;
+});
+function updateHitbox() {
+  if (!hitbox.visible || !bus) return;
+  bus.vehicle.wheelInfos.forEach((w, i) => {
+    const { line, ring } = wheelRays[i];
+    const a = w.chassisConnectionPointWorld, b = w.raycastResult.hasHit ? w.raycastResult.hitPointWorld : a;
+    line.geometry.attributes.position.setXYZ(0, a.x, a.y, a.z);
+    line.geometry.attributes.position.setXYZ(1, b.x, b.y, b.z);
+    line.geometry.attributes.position.needsUpdate = true;
+    bus.vehicle.updateWheelTransform(i);
+    const t = w.worldTransform;
+    ring.position.set(t.position.x, t.position.y, t.position.z);
+    ring.quaternion.set(t.quaternion.x, t.quaternion.y, t.quaternion.z, t.quaternion.w);
+    ring.rotateZ(Math.PI / 2);
+  });
+  for (const { w, p } of propWires) { w.position.copy(p.body.position); w.quaternion.copy(p.body.quaternion); }
+}
+
 // ---------------------------------------------------------------- load
 const loadbar = document.getElementById('loadbar');
 const loaderText = document.getElementById('loader-text');
-window.viewer = { camera, controls, car, vehicle, setCam,   // handy in the console
-  horn: () => ({ air: !!air, music: musicPlaying, audio: audio && audio.state }),
-  parts: () => ({ wheels: parts.wheels.length, steering: !!parts.steering,
-    spin: +wheelSpin.toFixed(2), steer: +car.steer.toFixed(2),
-    fl: parts.wheels.find(w => w.front)?.node.rotation.toArray().slice(0, 2).map(v => +v.toFixed(2)) }) };
+window.viewer = { camera, controls, car, vehicle, setCam, world, props,  // handy in the console
+  get bus() { return bus; },
+  horn: () => ({ air: !!air, music: musicPlaying, audio: audio && audio.state }) };
 
 // The model ships as base64 text so any static host serves it; decode, then parse.
 const fileLoader = new THREE.FileLoader();
@@ -735,19 +1182,26 @@ fileLoader.load('agni_bus.glb.b64.txt', b64 => {
 
 const glassMats = [];
 // Moving parts exported as their own nodes (origin at the axle / column).
-const parts = { wheels: [], steering: null };
+const parts = { byName: {}, steering: null };
 const STEER_AXIS = new THREE.Vector3(0, Math.cos(1.1), Math.sin(1.1));  // column tilt
-const TYRE_R = 0.53, STEER_RATIO = 7;
-let wheelSpin = 0;
+const STEER_RATIO = 7;
 function onModel(gltf) {
+  const colliders = [];
+  gltf.scene.updateMatrixWorld(true);
   gltf.scene.traverse(o => {
     if (o.name.startsWith('PART-wheel_')) {
       o.rotation.order = 'YXZ';                       // steer about Y, then roll about X
-      parts.wheels.push({ node: o, front: /_f[lr]$/.test(o.name) });
+      parts.byName[o.name.slice(5)] = { node: o, base: o.position.clone() };
     } else if (o.name === 'PART-steering_wheel') parts.steering = o;
+    else if (o.name.startsWith('COL-')) {
+      // Hitbox boxes from the model (axis-aligned in bus space).
+      const box = new THREE.Box3().setFromObject(o), size = box.getSize(new THREE.Vector3()), mid = box.getCenter(new THREE.Vector3());
+      colliders.push({ name: o.name, half: size.multiplyScalar(0.5).toArray(), pos: mid.toArray(), quat: [0, 0, 0, 1] });
+      o.visible = false;
+    }
   });
   gltf.scene.traverse(o => {
-    if (!o.isMesh) return;
+    if (!o.isMesh || !o.visible) return;
     o.castShadow = o.receiveShadow = true;
     const m = o.material;
     if (m && m.transmission > 0) {
@@ -756,7 +1210,10 @@ function onModel(gltf) {
       glassMats.push(m);
     }
   });
+  if (!colliders.length) colliders.push({ half: [1.3, 1.525, 5.5], pos: [0, 1.925, 0], quat: [0, 0, 0, 1] });
   body.add(gltf.scene);
+  bus = new Bus(world, colliders);
+  buildHitbox(colliders);
   document.getElementById('loader').hidden = true;
   setCam('chase');
   canvas.focus();
