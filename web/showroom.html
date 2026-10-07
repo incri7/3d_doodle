@@ -32,6 +32,8 @@
   .row.bottom { align-items: flex-end; }
   .row > * { pointer-events: auto; }
   .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; backdrop-filter: blur(8px); }
+  .lead { display: flex; gap: 8px; align-items: flex-start; min-width: 0; }
+  .back { align-self: stretch; padding: 0 14px; }
   .plate { padding: 12px 16px 13px; max-width: min(400px, 100%); min-width: 0; }
   .eyebrow { font: 600 11px/1 var(--body); letter-spacing: .16em; text-transform: uppercase; color: var(--brass); }
   h1 { margin: 6px 0 2px; font: 700 34px/1 var(--display); letter-spacing: .03em; text-wrap: balance; }
@@ -75,10 +77,13 @@
 </div>
 <div class="ui">
   <div class="row">
+    <div class="lead">
+    <button class="back panel" id="b-back" title="Back to the main page">← Main</button>
     <div class="plate panel">
       <div class="eyebrow">Showroom · Super Agni A/C VIP Sofa</div>
       <h1>AGNI <span>EXPRESS</span></h1>
       <div class="route">काठमाण्डौ<span class="to">→</span>काँकडभिट्टा</div>
+    </div>
     </div>
     <div class="views panel" role="group" aria-label="Camera views">
       <button data-view="front" aria-pressed="true">Front ¾</button>
@@ -278,6 +283,7 @@ const spinBtn = document.getElementById('b-spin');
 spinBtn.setAttribute('aria-pressed', String(spinning));
 function setSpin(on) { spinning = on; spinBtn.setAttribute('aria-pressed', String(on)); }
 spinBtn.addEventListener('click', () => setSpin(!spinning));
+document.getElementById('b-back').addEventListener('click', () => { location.href = 'main.html'; });
 controls.addEventListener('start', () => {
   dragging = true; fly = null;
   document.querySelectorAll('[data-view]').forEach(b => b.setAttribute('aria-pressed', 'false'));
