@@ -5,3 +5,4 @@ output/*/_tt/
 output/*/_view_*.png
 data/
 output/ktm_ringroad/*.blend
+output/ktm_street/*.blend

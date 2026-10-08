@@ -28,3 +28,20 @@ Downloads are cached in `data/ktm/` (not committed, ~0.7 GB).
 
 Building heights: OSM `building:levels` / `height` where tagged; otherwise
 a Kathmandu-typical 2-6 storeys (mostly 3-5) picked per building.
+
+## Street level: Kalanki -> Balkhu bridge
+
+```bash
+.venv/bin/python world/build_street.py [--fast]   # -> output/ktm_street/
+```
+
+1.8 km of the Ring Road rebuilt at street level on the same data. The
+cross-section comes from OpenStreetMap (inner carriageways at +-4 m, outer
+ones at +-14..17 m: 8 lanes) and the Mapillary photos (black/yellow kerbs,
+raised separators, yellow edge lines, white lane dashes, paver footpaths,
+poles with sagging wires, median street lights, the Balkhu Khola bridge).
+3,168 nearby buildings get windows, slab bands, balconies, shop shutters,
+signboards with Devanagari shop names and rooftop water tanks; the rest of
+the valley (113k buildings, DEM + Sentinel-2) is the backdrop. The Agni and
+Sajha buses drive on it. `compare_photos.jpg` puts each Mapillary photo next
+to a render from the same spot and heading.
