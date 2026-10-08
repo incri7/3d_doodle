@@ -45,3 +45,11 @@ signboards with Devanagari shop names and rooftop water tanks; the rest of
 the valley (113k buildings, DEM + Sentinel-2) is the backdrop. The Agni and
 Sajha buses drive on it. `compare_photos.jpg` puts each Mapillary photo next
 to a render from the same spot and heading.
+
+## Drive it
+
+`world/export_web.py` writes `web/ktm_map.json` + `web/ktm_sat.jpg`;
+`web/make_drive.py` builds `web/drive.html` (the driving page + `web/map-ktm.js`).
+Main page -> **Play**. The bus starts at the Kalanki end in the outer
+left lane; buildings, kerbs, poles and trees are solid. The skin picked in
+the showroom is remembered and used on every page.

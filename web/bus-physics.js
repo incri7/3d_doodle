@@ -40,6 +40,7 @@ export const BUS = {
   muPeak: 0.85, muLocked: 0.62,         // longitudinal tyre grip: rolling vs locked (sliding)
   grip: { road: 1.3, offroad: 0.75 },   // tyre friction (frictionSlip), about 0.8 g on asphalt
   roadHalfWidth: 5,                     // the road runs along world Z at x = 0
+  onRoad: null,                         // optional (x, z) => bool for maps with curved roads
 };
 
 /** Torque curve: a fat diesel mid-range that falls away near the redline. */
@@ -253,7 +254,7 @@ export class Bus {
       if (rearLocked) b = Math.max(b, info.suspensionForce * STEP * BUS.muLocked);
       // Grip: asphalt vs verge; the handbrake lets the rear step out a little.
       const p = info.raycastResult.hitPointWorld;
-      const onRoad = info.isInContact && Math.abs(p.x) < BUS.roadHalfWidth;
+      const onRoad = info.isInContact && (BUS.onRoad ? BUS.onRoad(p.x, p.z) : Math.abs(p.x) < BUS.roadHalfWidth);
       info.frictionSlip = (onRoad ? BUS.grip.road : BUS.grip.offroad) * (lockedWheel || rearLocked ? 0.35 : 1);
       if (!onRoad && info.isInContact && coast) b *= 2.5;
       // cannon-es pushes along -forward for positive force in this axis setup
@@ -284,7 +285,8 @@ export class Bus {
       contact: w.isInContact,
       // tyre sliding (locked under braking, or past its grip sideways): skid marks, smoke
       skid: w.isInContact && ((this.wheelLock && this.wheelLock[i]) || w.skidInfo < 0.75),
-      onRoad: Math.abs(w.raycastResult.hitPointWorld.x) < BUS.roadHalfWidth,
+      onRoad: BUS.onRoad ? BUS.onRoad(w.raycastResult.hitPointWorld.x, w.raycastResult.hitPointWorld.z)
+        : Math.abs(w.raycastResult.hitPointWorld.x) < BUS.roadHalfWidth,
       contactPoint: w.raycastResult.hitPointWorld,
     }));
   }

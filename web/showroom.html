@@ -459,12 +459,17 @@ function loadSkin(file) {
     }, fail);
   }, e => { if (e.total) bar.style.width = (100 * e.loaded / e.total).toFixed(0) + '%'; }, fail);
 }
-loadSkin('agni_bus.glb.b64.txt');
+// The equipped skin is remembered (shared with the driving page).
+const savedSkin = (() => { try { return localStorage.getItem('agni.skin'); } catch { return null; } })();
+const startSkin = skinsMenu.querySelector(`[data-skin="${savedSkin}"]`) ? savedSkin : 'agni_bus.glb.b64.txt';
+skinsMenu.querySelectorAll('[data-skin]').forEach(i => i.setAttribute('aria-checked', String(i.dataset.skin === startSkin)));
+loadSkin(startSkin);
 skinsMenu.querySelectorAll('[data-skin]').forEach(item => item.addEventListener('click', () => {
   skinsMenu.querySelectorAll('[data-skin]').forEach(i => i.setAttribute('aria-checked', String(i === item)));
   skinsMenu.hidden = true;
   skinsBtn.setAttribute('aria-expanded', 'false');
   loadSkin(item.dataset.skin);
+  try { localStorage.setItem('agni.skin', item.dataset.skin); } catch { /* storage blocked: skin applies to this visit only */ }
   canvas.focus();
 }));
 function fail(err) {
