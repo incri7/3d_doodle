@@ -1215,6 +1215,7 @@ function setCam(id) {
   // From inside, tinted glass looks much lighter than from outside.
   const inside = id === 'driver' || id === 'cabin';
   for (const m of glassMats) m.color.copy(inside ? new THREE.Color(0.75, 0.78, 0.8) : m.userData.tint);
+  if (MAP) for (const m of glassMats) { m.opacity = inside ? 0.06 : 0.42; if (inside) m.color.setRGB(0.4, 0.42, 0.44); }
   snap = true;
 }
 
@@ -1319,12 +1320,14 @@ function layoutMirrors(W, H) {
   place(mirrors.right, W - 26 - sw / 2, H * 0.52, sw, sh);
   overlayCam.right = W; overlayCam.top = H; overlayCam.updateProjectionMatrix();
 }
+let mirrorFrame = 0;
 function renderMirrors() {
   const show = document.getElementById('t-mirror').checked;
   const side = cam.mirrors === 'side';
   const rear = show && !side && !['orbit', 'tv', 'top', 'second'].includes(cam.id);
   mirrors.rear.glass.visible = mirrors.rear.frame.visible = rear;
   for (const m of [mirrors.left, mirrors.right]) m.glass.visible = m.frame.visible = show && side;
+  if (MAP && (mirrorFrame++ & 1)) return;        // mirror images refresh every other frame on the map
   for (const m of Object.values(mirrors)) {
     if (!m.glass.visible) continue;
     m.mcam.position.copy(vehicle.localToWorld(m.from.clone()));
@@ -1437,7 +1440,7 @@ function setQuality(on) {
   hq = on;
   sun.shadow.mapSize.setScalar(on ? 4096 : 1024);
   if (sun.shadow.map) { sun.shadow.map.dispose(); sun.shadow.map = null; }
-  renderer.setPixelRatio(Math.min(devicePixelRatio, on ? 2 : 1));
+  renderer.setPixelRatio(Math.min(devicePixelRatio, on ? (MAP ? 1.5 : 2) : 1));
   resize();
 }
 
@@ -1719,6 +1722,7 @@ function drive(dt) {
   const input = { gas: gas ? 1 : 0, brake: brake ? 1 : 0, steer: (left ? 1 : 0) - (right ? 1 : 0), handbrake: car.handbrake };
   lastInput = input;
 
+  if (MAP) KTM.stream(vehicle.position.x, vehicle.position.z);   // nearby colliders only
   // Fixed 120 Hz physics, independent of frame rate.
   accumulator += dt;
   let n = 0;
@@ -1966,7 +1970,7 @@ function updateHitbox() {
 // ---------------------------------------------------------------- load
 const loadbar = document.getElementById('loadbar');
 const loaderText = document.getElementById('loader-text');
-window.viewer = { camera, controls, car, vehicle, setCam, world, props, setTime, setQuality, indicator,  // handy in the console
+window.viewer = { camera, controls, car, vehicle, setCam, world, props, setTime, setQuality, indicator, renderer, scene,  // handy in the console
   get bus() { return bus; },
   horn: () => ({ air: !!air, music: musicPlaying, audio: audio && audio.state }),
   sound: () => ({ engine: !!engine, audio: audio && audio.state, rate: engine && +engine.low.playbackRate.value.toFixed(2) }) };
@@ -2017,6 +2021,8 @@ function onModel(gltf) {
     }
     if (m && m.transmission > 0) {
       m.thickness = 0.01; m.envMapIntensity = 1.5; m.roughness = Math.max(0.08, Math.min(m.roughness, 0.12)); o.castShadow = false;
+      // On the big map the refraction pass (a second full render of the city) costs too much: plain tinted glass.
+      if (MAP) { m.transmission = 0; m.transparent = true; m.opacity = 0.42; m.depthWrite = false; }
       m.userData.tint = m.color.clone();
       glassMats.push(m);
     }

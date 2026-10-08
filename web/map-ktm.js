@@ -4,7 +4,37 @@
 // Data: ktm_map.json from world/export_web.py (OpenStreetMap, Google Open
 // Buildings, Copernicus DEM, Sentinel-2). Map x = east, y = north; three.js
 // X = x, Z = -y. The playable world is flat; hills rise away from the road.
-const KTM = { ready: false, start: null, lights: [] };
+const KTM = { ready: false, start: null, lights: [], stream: () => {} };
+// Collider streaming: thousands of static bodies make every physics step
+// scan them all, so only those within ~100 m of the bus are in the world.
+const KTM_CELL = 50, KTM_REACH = 2;
+const ktmCells = new Map(), ktmActive = new Set();
+function poolAdd(b) {
+  const key = Math.floor(b.position.x / KTM_CELL) + ',' + Math.floor(b.position.z / KTM_CELL);
+  if (!ktmCells.has(key)) ktmCells.set(key, []);
+  ktmCells.get(key).push(b);
+}
+function poolBox(half, pos, yaw = 0) {
+  const b = new CANNON.Body({ mass: 0, shape: new CANNON.Box(new CANNON.Vec3(...half)) });
+  b.position.set(...pos); b.quaternion.setFromEuler(0, yaw, 0); poolAdd(b);
+}
+function poolCyl(r, h, pos) {
+  const b = new CANNON.Body({ mass: 0, shape: new CANNON.Cylinder(r, r, h, 8) });
+  b.position.set(...pos); poolAdd(b);
+}
+let ktmLastCell = null;
+KTM.stream = (x, z) => {
+  const cx = Math.floor(x / KTM_CELL), cz = Math.floor(z / KTM_CELL), key = cx + ',' + cz;
+  if (key === ktmLastCell) return;
+  ktmLastCell = key;
+  const want = new Set();
+  for (let i = -KTM_REACH; i <= KTM_REACH; i++) for (let j = -KTM_REACH; j <= KTM_REACH; j++) {
+    const list = ktmCells.get((cx + i) + ',' + (cz + j));
+    if (list) for (const b of list) want.add(b);
+  }
+  for (const b of ktmActive) if (!want.has(b)) { world.removeBody(b); ktmActive.delete(b); }
+  for (const b of want) if (!ktmActive.has(b)) { world.addBody(b); ktmActive.add(b); }
+};
 {
   const P2 = (x, y, h = 0) => new THREE.Vector3(x, h, -y);
   const tex = (w, h, draw, rep = true) => {
@@ -184,7 +214,7 @@ const KTM = { ready: false, start: null, lights: [] };
       const cx = (a[0] + b[0]) / 2, cy = (a[1] + b[1]) / 2, len = Math.hypot(b[0] - a[0], b[1] - a[1]) / 2 + 0.3;
       const tx = (b[0] - a[0]) / (2 * len - 0.6), ty = (b[1] - a[1]) / (2 * len - 0.6), nx = -ty, ny = tx;
       const yaw = Math.atan2(ty, tx);
-      const add = (o, hw, h) => staticBox(world, [len, h / 2, hw], [cx + nx * o, h / 2, -(cy + ny * o)], yaw);
+      const add = (o, hw, h) => poolBox( [len, h / 2, hw], [cx + nx * o, h / 2, -(cy + ny * o)], yaw);
       add(0, M0, 0.25);
       for (const sg of [1, -1]) {
         add(sg * (I1 + S1) / 2, r.sep / 2, 0.25);
@@ -293,10 +323,10 @@ const KTM = { ready: false, start: null, lights: [] };
       for (const t of tris) roofG.i.push(base + t[0], base + t[2], base + t[1]);
       if (b.b[2] * b.b[3] > 20 && rand() < 0.7) tanks.push([b.b[0], b.b[1], H]);
       // collider: oriented box
-      staticBox(world, [b.b[2] / 2, H / 2, b.b[3] / 2], [b.b[0], H / 2, -b.b[1]], b.b[4]);
+      poolBox( [b.b[2] / 2, H / 2, b.b[3] / 2], [b.b[0], H / 2, -b.b[1]], b.b[4]);
     }
-    wallsG.mesh(walls); shopG.mesh(shutters); roofG.mesh(roofMat);
-    extraG.mesh(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.7, side: THREE.DoubleSide }));
+    wallsG.mesh(walls); shopG.mesh(shutters); roofG.mesh(roofMat, false);
+    extraG.mesh(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.7, side: THREE.DoubleSide }), false);
     signG.forEach((g, i) => { if (g.i.length) g.mesh(signMats[i], false); });
     {
       const tm = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.6, 0.6, 1.25, 14), new THREE.MeshStandardMaterial({ color: 0x0b0b0c, roughness: 0.4 }), tanks.length);
@@ -330,7 +360,7 @@ const KTM = { ready: false, start: null, lights: [] };
         const tz = [T[k][0], -T[k][1]], nz = [N[k][0] * sg, -N[k][1] * sg];
         poleG.box(x, 4.6, -y, tz, nz, 0.12, 4.6, 0.12, grey);
         poleG.box(x, 8.6, -y, tz, nz, 0.9, 0.05, 0.06, dark);
-        staticBox(world, [0.15, 4.6, 0.15], [x, 4.6, -y]);
+        poolBox( [0.15, 4.6, 0.15], [x, 4.6, -y]);
         const tops = [-0.8, -0.3, 0.3, 0.8].map(d => new THREE.Vector3(x + T[k][0] * d, 8.65, -(y + T[k][1] * d)));
         if (last) for (let w = 0; w < 4; w++) for (const drop of [0, 0.25]) {
           let prev = null;
@@ -343,7 +373,7 @@ const KTM = { ready: false, start: null, lights: [] };
         last = tops;
       }
     }
-    poleG.mesh(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.8, side: THREE.DoubleSide }));
+    poleG.mesh(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.8, side: THREE.DoubleSide }), false);
     const wg = new THREE.BufferGeometry().setFromPoints(wire);
     scene.add(new THREE.LineSegments(wg, new THREE.LineBasicMaterial({ color: 0x111111 })));
     for (let s = 20; s < S[n - 1] - 10; s += 32) {
@@ -357,7 +387,7 @@ const KTM = { ready: false, start: null, lights: [] };
         KTM.lights.push(new THREE.Vector3(x + N[k][0] * sg * 1.9, 10.0, -(y + N[k][1] * sg * 1.9)));
       }
     }
-    lightG.mesh(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.5, side: THREE.DoubleSide }));
+    lightG.mesh(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.5, side: THREE.DoubleSide }), false);
     {
       const spots = [];
       for (const sg of [1, -1]) for (let s = 5; s < S[n - 1]; s += 7) {
@@ -373,7 +403,7 @@ const KTM = { ready: false, start: null, lights: [] };
         m4.compose(p.set(x, 0, -y), q, s3.set(k, k, k)); tr.setMatrixAt(i, m4);
         m4.compose(p.set(x, 2.1 * k, -y), q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), rand() * 6.3), s3.set(k, k, k)); cr.setMatrixAt(i, m4);
         cr.setColorAt(i, c.setHSL(0.24 + rand() * 0.08, 0.45, 0.18 + rand() * 0.1));
-        staticCylinder(world, 0.28 * k, 2.4 * k, [x, 1.2 * k, -y]);
+        poolCyl( 0.28 * k, 2.4 * k, [x, 1.2 * k, -y]);
         q.identity();
       });
       tr.castShadow = cr.castShadow = true;
@@ -394,6 +424,7 @@ const KTM = { ready: false, start: null, lights: [] };
 }
 function placeBusAtStart() {
   if (!KTM.ready || !bus) return;
+  KTM.stream(KTM.start.x, KTM.start.z);
   bus.reset(KTM.start.x, KTM.start.z, KTM.start.heading);
   snap = true;
 }
