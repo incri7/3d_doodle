@@ -3,3 +3,7 @@ uharfbuzz
 fonttools
 skia-pathops
 pillow
+rasterio
+pyproj
+shapely
+s2sphere

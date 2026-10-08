@@ -3,3 +3,5 @@ __pycache__/
 *.blend1
 output/*/_tt/
 output/*/_view_*.png
+data/
+output/ktm_ringroad/*.blend
