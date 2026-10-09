@@ -530,7 +530,7 @@ def main():
                  "wl": q20(wl), "wr": q20(wr), "div": q20(div), "ln": q20(ln - 1), "bridges": [[round(a, 1), round(b, 1)] for a, b in bridges],
                  "flyovers": [[round(a, 1), round(b, 1)] for a, b in flyovers],
                  "median": S.MEDIAN, "lane": S.LANE, "shoulder": S.SHOULDER, "sep": S.SEP, "foot": S.FOOT,
-                 "start": int(kk["Kalanki"])},
+                 "start": int(kk["Balkumari"])},
         "stubs": stubs, "places": pl, "signs": signs(loop, edge), "signals": signals(meta, loop, o), "stops": bus_stops(meta, loop, o),
         "near": near, "far": far,
         "terrain": {"x0": round(x0, 1), "y0": round(y0, 1), "step": TSTEP, "nx": len(xs), "ny": len(ys),

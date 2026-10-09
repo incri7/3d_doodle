@@ -1528,12 +1528,11 @@ function poolStream(x, z) {
     const busDrvMesh = busDrv.mesh(pplMat, body), busPplMesh = busPpl.mesh(pplMat, body);
     busDrvMesh.rotation.y = busPplMesh.rotation.y = -Math.PI / 2;          // their +x is the bus's forward (+z)
 
-    // start: Kalanki, heading for Balkhu in the outer carriageway (drive on the left)
+    // start: Balkumari, heading on toward Koteshwor, driving on the left
     {
-      const pB = places.find(p => p.en === 'Balkhu'), ks = r.start;
-      const dirB = pB && ((pB.s - S[ks] + LOOP) % LOOP) < LOOP / 2 ? 1 : -1;
-      const k = wrap(ks + dirB * Math.round(80 / r.step));
-      const o = dirB * (S1(k, dirB) + r.shoulder / 2 + r.lane / 2);
+      const ks = r.start, dirB = 1;
+      const k = wrap(ks + dirB * Math.round(80 / r.step)), F = frame(S[k]);
+      const o = dirB * laneOff(fw(F, dirB) > 0.999 ? 2 : F.ln > 1.99 ? 1 : 0, F, dirB);
       KTM.start = { x: pts[k][0] + N[k][0] * o, z: -(pts[k][1] + N[k][1] * o), heading: Math.atan2(dirB * TG[k][0], -dirB * TG[k][1]) };
     }
     chunkStream(KTM.start.x, KTM.start.z, true);
