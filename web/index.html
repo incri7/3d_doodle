@@ -482,7 +482,7 @@ class Bus {
     const vel = c.velocity, sp = vel.length();
     if (sp > 0.1) {
       const k = -0.5 * 1.2 * BUS.cdA * sp;
-      c.applyForce(new CANNON.Vec3(vel.x * k, vel.y * k, vel.z * k), c.position);
+      c.applyForce(new CANNON.Vec3(vel.x * k, vel.y * k, vel.z * k));   // at the centre of mass (cannon-es takes a point relative to the body)
     }
   }
 
@@ -1723,6 +1723,7 @@ function drive(dt) {
   lastInput = input;
 
   if (MAP) KTM.stream(vehicle.position.x, vehicle.position.z);   // nearby colliders only
+  if (MAP) KTM.update(dt);                                        // traffic
   // Fixed 120 Hz physics, independent of frame rate.
   accumulator += dt;
   let n = 0;
@@ -1972,6 +1973,7 @@ const loadbar = document.getElementById('loadbar');
 const loaderText = document.getElementById('loader-text');
 window.viewer = { camera, controls, car, vehicle, setCam, world, props, setTime, setQuality, indicator, renderer, scene,  // handy in the console
   get bus() { return bus; },
+  get map() { return MAP ? KTM : null; },
   horn: () => ({ air: !!air, music: musicPlaying, audio: audio && audio.state }),
   sound: () => ({ engine: !!engine, audio: audio && audio.state, rate: engine && +engine.low.playbackRate.value.toFixed(2) }) };
 

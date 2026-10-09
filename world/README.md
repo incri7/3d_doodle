@@ -24,6 +24,7 @@ Downloads are cached in `data/ktm/` (not committed, ~0.7 GB).
 | 64k extra building footprints (where OSM has none) | Google Open Buildings v3 | CC BY 4.0 / ODbL |
 | Terrain | Copernicus GLO-30 DEM, © DLR e.V. 2010-2014 and © Airbus 2014-2018, provided under COPERNICUS by the European Union and ESA | Copernicus DEM licence (free) |
 | Street photos (120 along the loop, contact sheet and map in output/ktm_ringroad/) | Mapillary, photos by @roadroid, @thapa7, @geohacker, @mahesh_thapa, @olily, @gauravparajuli09, @nitishmishra, @ArunBhomi, @mapconcierge, @Ghyasang_Ghising, @fundacja_geolife | CC BY-SA 4.0 |
+| Place names on the road boards | © OpenStreetMap contributors, looked up with Nominatim (`world/fetch_places.py`) | ODbL 1.0 |
 | Ground colour | Contains modified Copernicus Sentinel data (2026), Sentinel-2 L2A | Copernicus open licence |
 
 Building heights: OSM `building:levels` / `height` where tagged; otherwise
@@ -48,8 +49,25 @@ to a render from the same spot and heading.
 
 ## Drive it
 
-`world/export_web.py` writes `web/ktm_map.json` + `web/ktm_sat.jpg`;
-`web/make_drive.py` builds `web/drive.html` (the driving page + `web/map-ktm.js`).
-Main page -> **Play**. The bus starts at the Kalanki end in the outer
-left lane; buildings, kerbs, poles and trees are solid. The skin picked in
-the showroom is remembered and used on every page.
+```bash
+.venv/bin/python world/fetch_places.py   # place names along the loop (Nominatim)
+.venv/bin/python world/export_web.py     # -> web/ktm_map.json + web/ktm_sat.jpg
+python3 web/make_drive.py                # -> web/drive.html (driving page + web/map-ktm.js)
+```
+
+Main page -> **Play**. The whole loop (27.3 km centreline from OpenStreetMap,
+`world/ring_loop.py`) is drivable: 8 lanes from Kalanki via Balkhu to
+Koteshwor, 4 lanes with a median round the north, 287 side roads joining
+through gaps in the footpath, river bridges with parapets. The bus starts at
+Kalanki in the outer left lane. The road is streamed in 200 m chunks
+(meshes and colliders) around the bus.
+
+- Place boards: a blue board names each of 21 places (Nepali and English)
+  on both carriageways; a green board 260 m on lists the next two places
+  ahead and their distance.
+- Traffic: 124 motorbikes, cars, SUVs, microbuses, buses, trucks and Safa
+  tempos drive on the left around the bus, follow the vehicle ahead (the
+  bus included), change lanes, merge where 8 lanes become 4 and light up
+  their brake lamps. They are solid: knock one and it stops.
+
+The skin picked in the showroom is remembered and used on every page.

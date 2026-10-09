@@ -266,7 +266,7 @@ export class Bus {
     const vel = c.velocity, sp = vel.length();
     if (sp > 0.1) {
       const k = -0.5 * 1.2 * BUS.cdA * sp;
-      c.applyForce(new CANNON.Vec3(vel.x * k, vel.y * k, vel.z * k), c.position);
+      c.applyForce(new CANNON.Vec3(vel.x * k, vel.y * k, vel.z * k));   // at the centre of mass (cannon-es takes a point relative to the body)
     }
   }
 
