@@ -32,7 +32,7 @@ NEAR = 100          # detailed buildings out to this distance from the centrelin
 FAR = 400           # box buildings out to this distance
 TER = 2600          # terrain extent around the loop
 TSTEP = 40.0        # terrain grid step (m)
-STUB = 60           # side roads drawn this far out from the kerb
+STUB = 100          # side roads drawn this far out from the kerb
 SIDE_CLS = {"trunk": 7.5, "primary": 7.5, "secondary": 6.5, "tertiary": 6, "unclassified": 5,
             "residential": 5, "trunk_link": 6, "primary_link": 6, "secondary_link": 5.5, "tertiary_link": 5}
 # Ring Road junctions in order of priority (Nominatim queries in fetch_places.py)
@@ -207,6 +207,31 @@ def signs(loop, edge):
         res.append({"k": int(round((o["s0"] + o["s1"]) / 2 / STEP)) % loop.n, "dir": o["dir"], "kind": "gantry" if gantry else "pole"})
     print("signs", len(res), "gantries", sum(r["kind"] == "gantry" for r in res))
     return res
+
+
+def signals(meta, loop, o):
+    """Signalised junctions and signal-controlled crossings on the Ring Road (world/fetch_signals.py,
+    OSM highway=traffic_signals / crossing=traffic_signals): nodes within 60 m along the road are
+    one site; a site with only crossing signals is a pedestrian crossing."""
+    path = os.path.join(DATA, "signals.json")
+    if not os.path.exists(path):
+        return []
+    pts = []
+    for n in json.load(open(path)):
+        p = np.array([(n["lon"] - meta["lon0"]) * meta["kx"] - o[0], (n["lat"] - meta["lat0"]) * meta["ky"] - o[1]])
+        k, off = loop.offset(p)
+        if abs(float(off[0])) < 40:
+            pts.append((float(loop.s[k[0]]), n["crossing"]))
+    pts.sort()
+    sites = []
+    for sv, crossing in pts:
+        if sites and sv - sites[-1]["s"][-1] < 60:
+            sites[-1]["s"].append(sv); sites[-1]["c"].append(crossing)
+        else:
+            sites.append({"s": [sv], "c": [crossing]})
+    out = [{"k": int(round(np.mean(q["s"]) / STEP)) % loop.n, "kind": "crossing" if all(q["c"]) else "junction"} for q in sites]
+    print("signals", [(round(loop.s[q["k"]]), q["kind"]) for q in out])
+    return out
 
 
 def q20(a):
@@ -491,7 +516,7 @@ def main():
                  "flyovers": [[round(a, 1), round(b, 1)] for a, b in flyovers],
                  "median": S.MEDIAN, "lane": S.LANE, "shoulder": S.SHOULDER, "sep": S.SEP, "foot": S.FOOT,
                  "start": int(kk["Kalanki"])},
-        "stubs": stubs, "places": pl, "signs": signs(loop, edge),
+        "stubs": stubs, "places": pl, "signs": signs(loop, edge), "signals": signals(meta, loop, o),
         "near": near, "far": far,
         "terrain": {"x0": round(x0, 1), "y0": round(y0, 1), "step": TSTEP, "nx": len(xs), "ny": len(ys),
                     "h": base64.b64encode(hq.tobytes()).decode()},

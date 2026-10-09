@@ -184,6 +184,10 @@ function poolStream(x, z) {
         }
       }
     }
+    quadUp(a, b, c, d) {                          // a flat quad, wound to face up whichever way it was given
+      const ny = (b.z - a.z) * (d.x - a.x) - (b.x - a.x) * (d.z - a.z);
+      if (ny >= 0) this.quad(a, b, c, d, [0, 0], [1, 0], [1, 1], [0, 1]); else this.quad(a, d, c, b, [0, 0], [0, 1], [1, 1], [1, 0]);
+    }
     get empty() { return this.i.length === 0; }
     geometry() {
       const g = new THREE.BufferGeometry();
@@ -398,7 +402,27 @@ function poolStream(x, z) {
     for (const q of signsAll) {                     // posts stand on the footpath, clear of side-road mouths
       for (let i = 0; i < 30 && (isGap(q.dir, kAt(q.s)) || isGap(q.dir, kAt(q.s) + 1)); i++) q.s = wrapS(q.s - q.dir * r.step);
     }
-    KTM.places = places;
+    // --- traffic signals: OSM's signalised junctions and signal-controlled crossings on the Ring Road
+    // (world/fetch_signals.py). The Ring Road gets green for most of the cycle.
+    const sigSites = (D.signals || []).map((q, i) => {
+      const mk = () => new THREE.MeshBasicMaterial({ toneMapped: false });
+      return { s: S[q.k], kind: q.kind, D: q.kind === 'junction' ? 14 : 4, off: (i * 23) % 60, mats: { r: mk(), a: mk(), g: mk() }, state: '' };
+    });
+    const CYCLE = { junction: [30, 3, 27], crossing: [40, 3, 15] };          // green, amber, red (s)
+    const LAMP_ON = { r: [4, 0.25, 0.12], a: [4, 2.2, 0.1], g: [0.25, 3.2, 0.9] }, LAMP_OFF = { r: [0.18, 0.03, 0.03], a: [0.18, 0.12, 0.02], g: [0.03, 0.15, 0.06] };
+    let sigClock = 0;
+    function updateSignals(dt) {
+      sigClock += dt;
+      for (const q of sigSites) {
+        const [g, a, rd] = CYCLE[q.kind], t = (sigClock + q.off) % (g + a + rd);
+        const st = t < g ? 'g' : t < g + a ? 'a' : 'r';
+        if (st === q.state) continue;
+        q.state = st;
+        for (const k of ['r', 'a', 'g']) q.mats[k].color.setRGB(...(k === st ? LAMP_ON : LAMP_OFF)[k]);
+      }
+    }
+    updateSignals(0);
+    KTM.places = places; KTM.signals = sigSites;
 
     // --- terrain (DEM, flattened inside the ring and by the road) with the satellite image -
     {
@@ -799,6 +823,52 @@ function poolStream(x, z) {
         postG.mesh(colMat, group, false);
       }
 
+      // traffic signals: a pole on the kerb with a head, an arm with a second head over the lanes,
+      // stop lines; zebra crossings at the signal-controlled crossings
+      for (const q of sigSites) {
+        const sg = new Geo(), lampG = { r: new Geo(), a: new Geo(), g: new Geo() }, whiteG = new Geo();
+        const head = (x, y, z, fx, fy, ax) => {              // a 3-lamp head at (x, y) map, z up, facing (fx, fy)
+          sg.box(x - fx * 0.12, z, -(y - fy * 0.12), [ax[0], -ax[1]], [fx, -fy], 0.18, 0.5, 0.12, dark);
+          ['r', 'a', 'g'].forEach((k, i) => {
+            const cz = z + 0.3 - i * 0.3, h = 0.11;
+            const p0 = P2(x - ax[0] * h + fx * 0.01, y - ax[1] * h + fy * 0.01, cz - h), p1 = P2(x + ax[0] * h + fx * 0.01, y + ax[1] * h + fy * 0.01, cz - h);
+            const up = new THREE.Vector3(0, 2 * h, 0);
+            lampG[k].quad(p0, p1, p1.clone().add(up), p0.clone().add(up), [0, 0], [1, 0], [1, 1], [0, 1]);
+          });
+        };
+        for (const dir of [1, -1]) {
+          const st = wrapS(q.s - dir * q.D);
+          if (st < sStart || st >= sEnd) continue;
+          const F = frame(st), nx = -F.ty * dir, ny = F.tx * dir, fx = -F.tx * dir, fy = -F.ty * dir, ax = [-fy, fx];
+          const at2 = o => [F.x + nx * o, F.y + ny * o];
+          const edge = EDGE(F.k, dir), [px, py] = at2(edge + 0.6), armTo = laneOff(0, F, dir) + 1;
+          sg.box(px, 2.9, -py, [F.tx, -F.ty], [nx, -ny], 0.09, 2.9, 0.09, grey);
+          poolCyl(0.12, 5.8, [px, 2.9, -py]);
+          head(px, py, 3.0, fx, fy, ax);
+          const [mx, my] = at2((edge + 0.6 + armTo) / 2), half = (edge + 0.6 - armTo) / 2;
+          sg.box(mx, 5.7, -my, [nx, -ny], [F.tx, -F.ty], half, 0.06, 0.06, grey);
+          const [hx, hy] = at2(armTo);
+          head(hx, hy, 5.0, fx, fy, ax);
+          // stop line over the lanes of this direction
+          const line = (o0, o1) => {
+            const A = frame(st), B = frame(st - dir * 0.45), pa = (G, o) => P2(G.x - G.ty * o * dir, G.y + G.tx * o * dir, 0.013);
+            whiteG.quadUp(pa(A, o0), pa(B, o0), pa(B, o1), pa(A, o1));
+          };
+          line(M0(F.k) + 0.3, I1(F.k) - 0.3);
+          if (fw(F, dir) > 0.99) line(S1(F.k, dir) + 0.3, edge - 0.3);
+        }
+        if (q.s >= sStart && q.s < sEnd) {                  // zebra across the whole road
+          const F = frame(q.s), w = EDGE(F.k, 1) + EDGE(F.k, -1);
+          for (let o = -EDGE(F.k, -1) + 0.4; o < EDGE(F.k, 1) - 0.4; o += 1.0) {
+            if (Math.abs(o) < M0(F.k) + 0.1 && F.dv > 0.5) continue;
+            const pa = (G, oo) => P2(G.x - G.ty * oo, G.y + G.tx * oo, 0.013), A = frame(q.s - 1.5), B = frame(q.s + 1.5);
+            whiteG.quadUp(pa(A, o), pa(B, o), pa(B, o + 0.5), pa(A, o + 0.5));
+          }
+        }
+        sg.mesh(colMat, group, false); whiteG.mesh(whiteP, group, false);
+        for (const k of ['r', 'a', 'g']) lampG[k].mesh(q.mats[k], group, false);
+      }
+
       ktmOwner = null;
       scene.add(group);
       return { group, bodies, lights, mats };
@@ -959,7 +1029,38 @@ function poolStream(x, z) {
     let h2 = 12345;
     const rand2 = () => (h2 = (h2 * 16807) % 2147483647) / 2147483647;
     const rel = s => { let d = ((s - busS) % LOOP + LOOP) % LOOP; if (d > LOOP / 2) d -= LOOP; return d; };
+    // side roads as paths from the kerb outwards (the stub polylines)
+    const sideRoads = D.stubs.map(st => {
+      const pts = [];
+      for (let k = 0; k < st.p.length; k += 2) pts.push([st.p[k], st.p[k + 1]]);
+      return { s: S[st.k], k: st.k, side: st.side, pts };
+    });
+    const kerbLane = (F, sg) => { const o = lanesOpen(F, sg); return o[o.length - 1]; };
+    function startPath(c, pts, out) {
+      const cum = [0];
+      for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]));
+      c.path = { pts, cum, out, d: 0 };
+    }
+    function pathPose(c) {                         // position and heading along the side-road path
+      const P = c.path, d = Math.min(P.d, P.cum[P.cum.length - 1]);
+      let i = 1;
+      while (i < P.cum.length - 1 && P.cum[i] < d) i++;
+      const a = P.pts[i - 1], b = P.pts[i], L = (P.cum[i] - P.cum[i - 1]) || 1, f = (d - P.cum[i - 1]) / L;
+      return { x: a[0] + (b[0] - a[0]) * f, y: a[1] + (b[1] - a[1]) * f, hx: (b[0] - a[0]) / L, hy: (b[1] - a[1]) / L };
+    }
     function place(c, sNew) {
+      c.path = null; c.exitAt = null;
+      if (rand2() < 0.2) {                             // come out of a side road and wait to join
+        const cand = sideRoads.filter(q => { const d = Math.abs(rel(q.s)); return d > 80 && d < WIN - 40 && q.pts.length > 3; });
+        const q = cand[Math.floor(rand2() * cand.length)];
+        if (q && !cars.some(o => o.path && o.path.road === q)) {
+          const F = frame(q.s), lane = kerbLane(F, q.side), lat = laneOff(lane, F, q.side);
+          Object.assign(c, { s: q.s, dir: q.side, lane, lat, want: lat, wob: 0, stop: 0, brake: false, lc: 3, gap: 1e9, end: 1e9 });
+          c.v0 = c.t.v0[0] + rand2() * (c.t.v0[1] - c.t.v0[0]); c.v = 3;
+          startPath(c, q.pts.slice().reverse(), false); c.path.road = q;
+          return;
+        }
+      }
       for (let tries = 0; tries < 12; tries++) {
         const dir = rand2() < 0.5 ? 1 : -1, s = ((sNew + (tries ? (rand2() - 0.5) * 120 : 0)) % LOOP + LOOP) % LOOP;
         const F = frame(s), open = lanesOpen(F, dir);
@@ -983,6 +1084,7 @@ function poolStream(x, z) {
     KTM.update = (dt) => {
       if (!bus) return;
       dt = Math.min(dt, 0.1);
+      updateSignals(dt);
       const bp = bus.chassis.position, L0 = locate(bp.x, -bp.z);
       busS = L0.s; busO = L0.o;
       const F0 = frame(busS);
@@ -992,14 +1094,23 @@ function poolStream(x, z) {
       const laneFree = (c, lat, tight = false) => {
         const p = rel(c.s), bp = c.dir * (rel(busS) - p), ahead = tight ? 1.5 : 8, behind = tight ? 1 : 6;
         if (Math.abs(c.dir * busO - lat) < 3 && bp < (c.t.L + 11) / 2 + ahead + 2 && -bp < (c.t.L + 11) / 2 + behind + 2) return false;
-        return cars.every(o => o === c || o.dir !== c.dir || Math.min(Math.abs(o.lat - lat), Math.abs(o.want - lat)) > (o.t.Wd + c.t.Wd) / 2 + 0.3 ||
+        return cars.every(o => o === c || o.path || o.dir !== c.dir || Math.min(Math.abs(o.lat - lat), Math.abs(o.want - lat)) > (o.t.Wd + c.t.Wd) / 2 + 0.3 ||
           c.dir * (rel(o.s) - p) > (c.t.L + o.t.L) / 2 + ahead || c.dir * (p - rel(o.s)) > (c.t.L + o.t.L) / 2 + behind);
       };
       // lanes: leave a lane that ends ahead (the service carriageway or the second main lane
       // tapering away), zip in when there is room or wait at its end; pass slow traffic
       for (const c of cars) {
+        if (c.path) continue;
         const F = frame(c.s), sg = c.dir;
         c.lc -= dt; c.end = 1e9; c.into = null;
+        // some turn off into a side road on their side, from the kerb lane
+        if (!c.exitAt && c.lane === kerbLane(F, sg)) {
+          for (const q of sideRoads) {
+            if (q.side !== sg || q.pts.length < 4) continue;
+            const d = fwd(c.s, q.s, sg);
+            if (d > 15 && d < 45 && c.lastRoad !== q) { c.lastRoad = q; if (rand2() < 0.2) c.exitAt = q; break; }
+          }
+        }
         if (c.lane > 0) {
           let d = 0;
           while (d < 200 && !laneEnds(c.lane, frame(c.s + c.dir * d), sg)) d += 8;
@@ -1024,7 +1135,7 @@ function poolStream(x, z) {
       }
       // leaders: per direction, sorted by progress; a vehicle moving across counts in both lanes
       for (const dir of [1, -1]) {
-        const list = cars.filter(c => c.dir === dir).map(c => ({ c, p: dir * rel(c.s) })).sort((a, b) => a.p - b.p);
+        const list = cars.filter(c => c.dir === dir && !c.path).map(c => ({ c, p: dir * rel(c.s) })).sort((a, b) => a.p - b.p);
         const busP = dir * rel(busS), busLat = dir * busO;    // the bus in this direction's frame
         for (let i = 0; i < list.length; i++) {
           const { c, p } = list[i];
@@ -1037,19 +1148,47 @@ function poolStream(x, z) {
           const bg = busP - p - (11 + c.t.L) / 2;
           if (bg > -8 && bg < gap && Math.abs(busLat - c.lat) < (2.5 + c.t.Wd) / 2 + 0.4) { gap = Math.max(0.1, bg); vl = Math.max(0, dir * busV); }
           if (c.end - c.t.L / 2 - 1 < gap) { gap = Math.max(0.1, c.end - c.t.L / 2 - 1); vl = 0; }   // wait at the end of the lane
+          for (const q of sigSites) {                       // stop at red, and at amber unless too close to stop
+            if (q.state === 'g') continue;
+            const d = fwd(c.s, q.s - dir * q.D, dir) - c.t.L / 2;
+            if (d < 0 || d > 150 || (q.state === 'a' && d < c.v * c.v / 7 + 1)) continue;
+            if (d < gap) { gap = Math.max(0.1, d); vl = 0; }
+          }
           c.gap = gap; c.vl = vl;
         }
       }
       for (const c of cars) {
-        // intelligent driver model
+        if (c.path) {                                   // on a side road: in or out at 15-20 km/h
+          const P = c.path, len = P.cum[P.cum.length - 1], vmax = P.out ? 5.5 : 4.5;
+          if (!P.out && P.d >= len - 4) {               // at the kerb: pull out into the kerb lane when there is a gap
+            c.v = 0; c.brake = true;
+            const F = frame(c.s), lane = kerbLane(F, c.dir), lat = laneOff(lane, F, c.dir);
+            if (laneFree(c, lat, true)) {
+              const q = pathPose(c), L = locate(q.x, q.y);
+              c.path = null; c.s = L.s; c.lane = lane; c.lat = Math.abs(L.o); c.want = lat; c.lc = 3; c.v = 2;
+            }
+            continue;
+          }
+          c.v = Math.min(vmax, c.v + 1.5 * dt); c.brake = false;
+          P.d += c.v * dt;
+          if (P.out && P.d >= len) place(c, busS + (rand2() < 0.5 ? 1 : -1) * (WIN - rand2() * 80));
+          continue;
+        }
+        // intelligent driver model (slowing to turn off into a side road)
         const bike = c.t.name === 'bike', s0 = bike ? 1.2 : 2.2, Th = bike ? 0.8 : 1.3, b = 3.0;
+        const toExit = c.exitAt ? fwd(c.s, c.exitAt.s, c.dir) : 1e9, v0 = toExit < 45 ? Math.min(c.v0, 5.5) : c.v0;
         const ss = s0 + Math.max(0, c.v * Th + c.v * (c.v - c.vl) / (2 * Math.sqrt(c.t.a * b)));
-        let acc = c.t.a * (1 - Math.pow(c.v / c.v0, 4) - Math.pow(ss / Math.max(0.1, c.gap), 2));
+        let acc = c.t.a * (1 - Math.pow(c.v / v0, 4) - Math.pow(ss / Math.max(0.1, c.gap), 2));
         if (c.stop > 0) { c.stop -= dt; acc = -8; }
         acc = Math.max(-8, Math.min(c.t.a, acc));
         c.brake = acc < -0.6 || c.v < 0.3;
         c.v = Math.max(0, c.v + acc * dt);
         c.s = ((c.s + c.dir * c.v * dt) % LOOP + LOOP) % LOOP;
+        if (c.exitAt && (toExit - c.v * dt < 1 || toExit > LOOP / 2)) {          // turn in
+          const F = frame(c.s), o = c.dir * c.lat;
+          startPath(c, [[F.x - F.ty * o, F.y + F.tx * o], ...c.exitAt.pts], true); c.path.road = c.exitAt; c.exitAt = null;
+          continue;
+        }
         const F = frame(c.s);
         const want = laneOff(c.lane, F, c.dir) + c.wob;     // lanes squeeze in where they taper
         c.want = want;
@@ -1062,10 +1201,14 @@ function poolStream(x, z) {
       // pose, lamps and colliders
       const night = ktmNight() > 0.2;
       for (const c of cars) {
-        const F = frame(c.s), o = c.dir * c.lat;
-        const x = F.x - F.ty * o, y = F.y + F.tx * o;
-        const hx = F.tx * c.dir, hy = F.ty * c.dir, yaw = Math.atan2(hy, hx);
-        const up = c.lane < 2, y0 = up ? flyH(c.s) : 0, pitch = up ? Math.atan((flyH(c.s + c.dir * 2) - flyH(c.s - c.dir * 2)) / 4) : 0;
+        let x, y, hx, hy, y0 = 0, pitch = 0;
+        if (c.path) ({ x, y, hx, hy } = pathPose(c));
+        else {
+          const F = frame(c.s), o = c.dir * c.lat;
+          x = F.x - F.ty * o; y = F.y + F.tx * o; hx = F.tx * c.dir; hy = F.ty * c.dir;
+          if (c.lane < 2) { y0 = flyH(c.s); pitch = Math.atan((flyH(c.s + c.dir * 2) - flyH(c.s - c.dir * 2)) / 4); }
+        }
+        const yaw = Math.atan2(hy, hx);
         q4.setFromAxisAngle(Yax, yaw).multiply(qP.setFromAxisAngle(Zax, pitch));
         m4.compose(p4.set(x, y0, -y), q4, one);
         c.t.mBody.setMatrixAt(c.i, m4); c.t.mDet.setMatrixAt(c.i, m4); c.t.mHead.setMatrixAt(c.i, m4); c.t.mTail.setMatrixAt(c.i, m4);

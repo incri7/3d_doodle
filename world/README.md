@@ -25,6 +25,7 @@ Downloads are cached in `data/ktm/` (not committed, ~0.7 GB).
 | Terrain | Copernicus GLO-30 DEM, © DLR e.V. 2010-2014 and © Airbus 2014-2018, provided under COPERNICUS by the European Union and ESA | Copernicus DEM licence (free) |
 | Street photos (120 along the loop, contact sheet and map in output/ktm_ringroad/) | Mapillary, photos by @roadroid, @thapa7, @geohacker, @mahesh_thapa, @olily, @gauravparajuli09, @nitishmishra, @ArunBhomi, @mapconcierge, @Ghyasang_Ghising, @fundacja_geolife | CC BY-SA 4.0 |
 | Direction-sign positions (traffic-sign detections) | Mapillary map features (`world/fetch_signs.py`) | CC BY-SA 4.0 |
+| Traffic signals (highway / crossing = traffic_signals) | © OpenStreetMap contributors, OSM API (`world/fetch_signals.py`) | ODbL 1.0 |
 | Place names on the road boards | © OpenStreetMap contributors, looked up with Nominatim (`world/fetch_places.py`) | ODbL 1.0 |
 | Ground colour | Contains modified Copernicus Sentinel data (2026), Sentinel-2 L2A | Copernicus open licence |
 
@@ -78,6 +79,11 @@ colliders) around the bus.
 - Traffic: 124 motorbikes, cars, SUVs, microbuses, buses, trucks and Safa
   tempos drive on the left around the bus, follow the vehicle ahead (the
   bus included), change lanes, merge where 8 lanes become 4 and light up
-  their brake lamps. They are solid: knock one and it stops.
+  their brake lamps. They are solid: knock one and it stops. Some turn off
+  into the side roads from the kerb lane, others come out and wait for a gap.
+- Traffic signals where OSM has them (Mahalaxmisthan, Kanti Lokpath, Satdobato,
+  Koteshwor, Chabahil; signal crossings at Gaushala and Narayan Gopal Chowk):
+  poles with heads and arms, stop lines, zebra crossings, a green / amber / red
+  cycle the traffic obeys.
 
 The skin picked in the showroom is remembered and used on every page.
