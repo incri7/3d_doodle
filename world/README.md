@@ -79,7 +79,13 @@ colliders) around the bus.
 - Traffic: 124 motorbikes, cars, SUVs, microbuses, buses, trucks and Safa
   tempos drive on the left around the bus, follow the vehicle ahead (the
   bus included), change lanes, merge where 8 lanes become 4 and light up
-  their brake lamps. They are solid: knock one and it stops. Some turn off
+  their brake lamps. Near the bus every vehicle and person is a physical body
+  with its real mass (bike + rider 200 kg, car 1.05 t, SUV 1.8 t, Hiace
+  2.4 t, tempo 0.8 t, bus 11 t, loaded truck 12 t, person 65 kg; the player's
+  coach is 12 t): a collision shares momentum by mass, so a bike or a person
+  can't stop the bus but a truck can; whatever is hit slides to a stop on the
+  road (or against a kerb or wall), knocks into others, and people knocked
+  down get up again. Some turn off
   into the side roads from the kerb lane, others come out and wait for a gap.
 - People: every vehicle has its driver on the right (Nepal drives on the
   left), seen through the glass, and most carry passengers (full microbuses

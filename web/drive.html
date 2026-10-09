@@ -1716,8 +1716,14 @@ const ktmNight = () => (T ? T.night : 0);
 const KTM_CELL = 50, KTM_REACH = 2;
 const ktmCells = new Map(), ktmActive = new Set();
 let ktmOwner = null;                 // chunk collecting the bodies being made
+// collision groups: 1 the bus, 2 the map (kerbs, walls, poles), 4 traffic on its way, 8 people,
+// 16 vehicles knocked loose, 32 the ground and the flyover deck. Traffic and people move only
+// across the ground plane, so they never touch group 32; their sliding friction is applied
+// directly (a ground contact on a body held level acts like an anchor in the solver).
+const G_BUS = 1, G_MAP = 2, G_CAR = 4, G_PED = 8, G_WRECK = 16, G_GROUND = 32;
 function poolAdd(b) {
-  b.aabbNeedsUpdate = true;          // placed after the shape was added: the cached bounds are stale
+  b.aabbNeedsUpdate = true;
+  b.collisionFilterGroup = G_MAP;          // placed after the shape was added: the cached bounds are stale
   const key = Math.floor(b.position.x / KTM_CELL) + ',' + Math.floor(b.position.z / KTM_CELL);
   if (!ktmCells.has(key)) ktmCells.set(key, new Set());
   ktmCells.get(key).add(b);
@@ -1738,6 +1744,7 @@ function poolBoxP(half, pos, yaw, pitch) {         // yawed, then tilted along i
   b.position.set(...pos);
   b.quaternion.setFromAxisAngle(new CANNON.Vec3(0, 1, 0), yaw).mult(new CANNON.Quaternion().setFromAxisAngle(new CANNON.Vec3(0, 0, 1), pitch), b.quaternion);
   poolAdd(b);
+  return b;
 }
 function poolCyl(r, h, pos) {
   const b = new CANNON.Body({ mass: 0, shape: new CANNON.Cylinder(r, r, h, 8) });
@@ -2327,7 +2334,7 @@ function poolStream(x, z) {
         const ha = flyH(sOf(k)), hb = flyH(sOf(k) + L);
         if (ha > 0 || hb > 0) {                         // flyover deck (solid on the ramps), parapets, barrier
           const hm = (ha + hb) / 2, pitch = Math.atan2(hb - ha, L), th = hm < 4.5 ? Math.max(0.4, hm) : 0.4, DW = I1(km) + 0.3;
-          poolBoxP([len, th / 2, DW], [cx, hm - th / 2, -cy], yaw, pitch);
+          poolBoxP([len, th / 2, DW], [cx, hm - th / 2, -cy], yaw, pitch).collisionFilterGroup = G_GROUND;
           for (const o of [DW - 0.12, -(DW - 0.12)]) poolBoxP([len, 0.5, 0.15], [cx + nx * o, hm + 0.5, -(cy + ny * o)], yaw, pitch);
           poolBoxP([len, 0.42, 0.3], [cx, hm + 0.42, -cy], yaw, pitch);
         }
@@ -2645,6 +2652,7 @@ function poolStream(x, z) {
         ktmLastCell = null;
       }
     }
+    if (world.ground) world.ground.collisionFilterGroup = G_GROUND;
     KTM.stream = (x, z) => {
       chunkStream(x, z); poolStream(x, z);
       // the physics ground is an 8 km box: keep it centred under the bus (the loop is 9 km across)
@@ -2666,6 +2674,10 @@ function poolStream(x, z) {
       { name: 'truck', n: 6, L: 8.0, Wd: 2.45, Hh: 3.1, v0: [7, 11], a: 0.8, cols: ['#e06a10', '#c0262d', '#1f62b0', '#e5b30e'] },
       { name: 'tempo', n: 7, L: 3.3, Wd: 1.35, Hh: 1.85, v0: [7, 10], a: 1.2, cols: ['#2e8b57', '#2a6fb5', '#f0f0ee'] },
     ];
+    // kg, laden: a bike with its rider, a hatchback, an SUV, a Hiace, a city bus, a loaded truck, a Safa tempo
+    const MASS = { bike: 200, car: 1050, suv: 1800, micro: 2400, bus: 11000, truck: 12000, tempo: 800 };
+    const yawOf = q => 2 * Math.atan2(q.y, q.w);                // bodies only turn about the vertical
+    const angle = a => Math.atan2(Math.sin(a), Math.cos(a));
     const WHITE = new THREE.Color(1, 1, 1), GLASS = new THREE.Color(0x1a2128), TYRE = new THREE.Color(0x151515), METAL = new THREE.Color(0x9a9c9f),
       JACKET = new THREE.Color(0x2a2c33), WOOD = new THREE.Color(0x8b5a2b), BLACK = new THREE.Color(0x222222);
     const X = [1, 0], Z = [0, 1];
@@ -2900,6 +2912,16 @@ function poolStream(x, z) {
       return { s: S[st.k], k: st.k, side: st.side, pts };
     });
     const kerbLane = (F, sg) => { const o = lanesOpen(F, sg); return o[o.length - 1]; };
+    function slide(b, mu, dt) {                       // Coulomb friction on the road: decelerate by mu g
+      const v = b.velocity, sp = Math.hypot(v.x, v.z), f = sp > 0 ? Math.max(0, sp - mu * 9.81 * dt) / sp : 0;
+      v.x *= f; v.z *= f; b.angularVelocity.y *= Math.max(0, 1 - 2.5 * dt);
+    }
+    function crash(c) {
+      c.crashed = true; c.v = 0; c.path = null; c.exitAt = null;
+      const b = c.body;
+      b.collisionFilterGroup = G_WRECK; b.collisionFilterMask = G_BUS | G_MAP | G_CAR | G_PED | G_WRECK;   // now it hits kerbs and walls too
+      b.angularDamping = 0.4;
+    }
     function startPath(c, pts, out) {
       const cum = [0];
       for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]));
@@ -2913,7 +2935,8 @@ function poolStream(x, z) {
       return { x: a[0] + (b[0] - a[0]) * f, y: a[1] + (b[1] - a[1]) * f, hx: (b[0] - a[0]) / L, hy: (b[1] - a[1]) / L };
     }
     function place(c, sNew) {
-      c.path = null; c.exitAt = null;
+      c.path = null; c.exitAt = null; c.crashed = false;
+      if (c.body) { world.removeBody(c.body); c.body = null; }
       if (rand2() < 0.2) {                             // come out of a side road and wait to join
         const cand = sideRoads.filter(q => { const d = Math.abs(rel(q.s)); return d > 80 && d < WIN - 40 && q.pts.length > 3; });
         const q = cand[Math.floor(rand2() * cand.length)];
@@ -2971,7 +2994,7 @@ function poolStream(x, z) {
       // lanes: leave a lane that ends ahead (the service carriageway or the second main lane
       // tapering away), zip in when there is room or wait at its end; pass slow traffic
       for (const c of cars) {
-        if (c.path) continue;
+        if (c.path || c.crashed) continue;
         const F = frame(c.s), sg = c.dir;
         c.lc -= dt; c.end = 1e9; c.into = null;
         // some turn off into a side road on their side, from the kerb lane
@@ -3029,6 +3052,12 @@ function poolStream(x, z) {
         }
       }
       for (const c of cars) {
+        if (c.crashed) {                                // knocked loose: physics moves it; the others treat it as an obstacle
+          if (c.body) { const L = locate(c.body.position.x, -c.body.position.z); c.s = L.s; c.lat = Math.abs(L.o); c.dir = L.o >= 0 ? 1 : -1; }
+          c.v = 0; c.brake = true;
+          if (Math.abs(rel(c.s)) > WIN + 40) place(c, busS + (rand2() < 0.5 ? 1 : -1) * (WIN - rand2() * 80));
+          continue;
+        }
         if (c.path) {                                   // on a side road: in or out at 15-20 km/h
           const P = c.path, len = P.cum[P.cum.length - 1], vmax = P.out ? 5.5 : 4.5;
           if (!P.out && P.d >= len - 4) {               // at the kerb: pull out into the kerb lane when there is a gap
@@ -3073,7 +3102,12 @@ function poolStream(x, z) {
       const night = ktmNight() > 0.2;
       for (const c of cars) {
         let x, y, hx, hy, y0 = 0, pitch = 0;
-        if (c.path) ({ x, y, hx, hy } = pathPose(c));
+        if (c.crashed && c.body) {
+          const b = c.body, a = yawOf(b.quaternion);
+          x = b.position.x; y = -b.position.z; hx = Math.cos(a); hy = Math.sin(a); y0 = b.position.y - c.t.Hh / 2;
+          c.pose = [x, y, hx, hy, y0];
+        } else if (c.crashed && c.pose) [x, y, hx, hy, y0] = c.pose;
+        else if (c.path) ({ x, y, hx, hy } = pathPose(c));
         else {
           const F = frame(c.s), o = c.dir * c.lat;
           x = F.x - F.ty * o; y = F.y + F.tx * o; hx = F.tx * c.dir; hy = F.ty * c.dir;
@@ -3087,17 +3121,24 @@ function poolStream(x, z) {
         c.t.mXtra.setMatrixAt(c.i, c.xtra ? m4 : ZERO4);
         c.t.mTail.setColorAt(c.i, c.brake ? tailCol.setRGB(3, 0.15, 0.08) : night ? tailCol.setRGB(1.2, 0.05, 0.03) : tailCol.setRGB(0.45, 0.03, 0.03));
         c.t.mHead.setColorAt(c.i, night ? headCol.setRGB(3, 2.9, 2.6) : headCol.setRGB(0.85, 0.85, 0.82));
-        // a kinematic collider while near the bus; a knock stops the vehicle for a few seconds
+        // near the bus every vehicle is a real body with its real mass. On its way it is steered
+        // along its lane by velocity; hit by the bus (or by a wreck) it is let go: momentum is
+        // shared by mass, it slides to a stop on the road and becomes an obstacle.
         const near = (x - bp.x) ** 2 + (-y - bp.z) ** 2 < 70 * 70;
         if (near && !c.body) {
-          c.body = new CANNON.Body({ mass: 0, type: CANNON.Body.KINEMATIC, shape: new CANNON.Box(new CANNON.Vec3(c.t.L / 2, c.t.Hh / 2, c.t.Wd / 2)) });
-          c.body.addEventListener('collide', e => { if (e.body === bus.chassis) { c.stop = 3 + Math.random() * 3; c.v = 0; } });
-          world.addBody(c.body);
+          const b = new CANNON.Body({ mass: MASS[c.t.name], shape: new CANNON.Box(new CANNON.Vec3(c.t.L / 2, c.t.Hh / 2, c.t.Wd / 2)), linearDamping: 0.05, angularDamping: 0.6 });
+          b.linearFactor.set(1, 0, 1); b.angularFactor.set(0, 1, 0); b.allowSleep = false;
+          b.collisionFilterGroup = c.crashed ? G_WRECK : G_CAR; b.collisionFilterMask = c.crashed ? 31 : G_BUS | G_PED | G_WRECK;
+          b.position.set(x, y0 + c.t.Hh / 2, -y); b.quaternion.setFromAxisAngle(cY, yaw);
+          b.addEventListener('collide', e => { if (!c.crashed && (e.body === bus.chassis || e.body.collisionFilterGroup === G_WRECK)) crash(c); });
+          world.addBody(b); c.body = b;
         } else if (!near && c.body) { world.removeBody(c.body); c.body = null; }
-        if (c.body) {
-          c.body.position.set(x, y0 + c.t.Hh / 2, -y);
-          c.body.quaternion.set(q4.x, q4.y, q4.z, q4.w);
-          c.body.velocity.set(hx * c.v, 0, -hy * c.v);
+        if (c.body && c.crashed) slide(c.body, 0.7, dt);         // tyres and body scraping on asphalt
+        if (c.body && !c.crashed) {
+          const b = c.body, k = 8;
+          b.velocity.set(hx * c.v + (x - b.position.x) * k, 0, -hy * c.v + (-y - b.position.z) * k);
+          b.position.y = y0 + c.t.Hh / 2;
+          b.angularVelocity.set(0, angle(yaw - yawOf(b.quaternion)) * k, 0);
         }
       }
       updatePeople(dt);
@@ -3187,35 +3228,59 @@ function poolStream(x, z) {
           hx = F.ty * p.side; hy = -F.tx * p.side;          // facing across the road, toward the far side
         }
         let x = F.x - F.ty * off, y = F.y + F.tx * off;
+        if (p.down > 0 && p.body) { x = p.body.position.x; y = -p.body.position.z; hx = p.hx; hy = p.hy; moving = false; }
         // keep out of the bus's way: stop and step back toward the buildings
         const dx = x - bp.x, dz = -y - bp.z, along = dx * fw.x + dz * fw.z, lat = dx * fw.z - dz * fw.x;
         const near = Math.abs(along) < 7 && Math.abs(lat) < 2.6;
         if (p.kind !== 'cross') { if (near) p.dodge = Math.min(p.dodge + 2.0 * dt, 3.0); else p.dodge = Math.max(0, p.dodge - 0.4 * dt); }
         p.stun = Math.max(0, p.stun - dt);
         if (p.kind === 'walk') {
-          const go = near || p.stun > 0 ? 0 : p.v0;
+          const go = near || p.stun > 0 || p.down > 0 ? 0 : p.v0;
           p.v += Math.max(-3 * dt, Math.min(1.5 * dt, go - p.v));
           p.s = wrapS(p.s + p.dir * p.v * dt);
           moving = p.v > 0.15;
           if (Math.abs(rel(p.s)) > WINP + 30) placeWalker(p, busS + (rand2() < 0.5 ? 1 : -1) * (WINP - rand2() * 40));
         }
+        // knocked down: on the ground for a few seconds, then up again where they ended up
+        if (p.down > 0) {
+          p.down -= dt;
+          if (p.down <= 0 && p.body) {
+            const L = locate(p.body.position.x, -p.body.position.z), sd = L.o >= 0 ? 1 : -1, Fk = frame(L.s);
+            p.s = L.s; p.side = sd; p.frac = Math.min(1, Math.max(0, (Math.abs(L.o) - EDGE(Fk.k, sd) - 0.35) / (FOOT - 0.7)));
+            p.cross = 0; p.x0 = 0; p.dodge = 0;
+            p.body.collisionFilterMask = G_BUS | G_CAR | G_WRECK;
+          }
+        }
+        const fall = p.down > 0 ? Math.min(1, (6 - p.down) * 3, p.down / 1.2) : 0;
         // pose: body, then legs and arms swinging about hip and shoulder
         const sw = moving ? Math.sin(p.phase += dt * (p.kind === 'cross' ? 1.3 : p.v) * 3.3 / p.sc) * 0.5 : Math.sin(p.phase += dt * 0.7) * 0.03;
-        pQ.setFromAxisAngle(Yax, Math.atan2(hy, hx));
-        pM.compose(pV.set(x, 0, -y), pQ, pS.set(p.sc, p.sc, p.sc));
+        pQ.setFromAxisAngle(Yax, Math.atan2(hy, hx)).multiply(qP.setFromAxisAngle(Zax, fall * Math.PI / 2));
+        pM.compose(pV.set(x, fall * 0.12, -y), pQ, pS.set(p.sc, p.sc, p.sc));
         mT.setMatrixAt(p.i, pM); mH.setMatrixAt(p.i, pM); mD.setMatrixAt(p.i, p.female ? pM : ZERO4);
         for (const [m, y0, z0, k] of [[mL, 0.88, 0.09, 1], [mA, 1.42, 0.23, -0.7]]) for (const sd of [-1, 1]) {
           part.copy(pM).multiply(rot.makeTranslation(0, y0, z0 * sd)).multiply(rot.makeRotationZ(sw * k * sd));
           m.setMatrixAt(2 * p.i + (sd > 0 ? 1 : 0), part);
         }
-        // solid near the bus; a knock makes them stop
+        // near the bus a person is a 65 kg body: a bus or a vehicle knocks them down, they don't stop it
         const close = dx * dx + dz * dz < 25 * 25;
         if (close && !p.body) {
-          p.body = new CANNON.Body({ mass: 0, type: CANNON.Body.KINEMATIC, shape: new CANNON.Cylinder(0.22 * p.sc, 0.22 * p.sc, 1.7 * p.sc, 6) });
-          p.body.addEventListener('collide', e => { if (e.body === bus.chassis) p.stun = 3; });
-          world.addBody(p.body);
-        } else if (!close && p.body) { world.removeBody(p.body); p.body = null; }
-        if (p.body) p.body.position.set(x, 0.85 * p.sc, -y);
+          const b = new CANNON.Body({ mass: 65 * p.sc * p.sc, shape: new CANNON.Cylinder(0.22 * p.sc, 0.22 * p.sc, 1.7 * p.sc, 6), linearDamping: 0.1 });
+          b.linearFactor.set(1, 0, 1); b.angularFactor.set(0, 0, 0); b.allowSleep = false;
+          b.collisionFilterGroup = G_PED; b.collisionFilterMask = G_BUS | G_CAR | G_WRECK;
+          b.position.set(x, 0.85 * p.sc, -y);
+          b.addEventListener('collide', e => {
+            if (p.down > 0 || !(e.body === bus.chassis || e.body.collisionFilterGroup & (G_CAR | G_WRECK))) return;
+            p.down = 6; p.hx = hx; p.hy = hy;
+            b.collisionFilterMask = G_BUS | G_MAP | G_CAR | G_WRECK;    // tumbling along the ground
+          });
+          world.addBody(b); p.body = b;
+        } else if (!close && p.body) { world.removeBody(p.body); p.body = null; p.down = 0; }
+        if (p.body && p.down > 0) slide(p.body, 0.6, dt);
+        if (p.body && !(p.down > 0)) {
+          const b = p.body;
+          b.velocity.set((x - b.position.x) * 8, 0, (-y - b.position.z) * 8);
+          b.position.y = 0.85 * p.sc;
+        }
       }
       for (const m of [mT, mH, mD, mL, mA]) m.instanceMatrix.needsUpdate = true;
     }
