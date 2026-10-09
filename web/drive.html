@@ -1907,12 +1907,16 @@ function poolStream(x, z) {
 
   function build(D) {
     const r = D.road;
-    const M0 = r.median / 2, CW = 2 * r.lane + r.shoulder, I1 = M0 + CW, FOOT = r.foot, LOOP = r.loop;
+    const CW = 2 * r.lane + r.shoulder, FOOT = r.foot, LOOP = r.loop;      // CW: a 2-lane service carriageway
     const pts = [];
     for (let k = 0; k < r.pts.length; k += 2) pts.push([r.pts[k], r.pts[k + 1]]);
     const n = pts.length, S = [0], TG = [], N = [];
     for (let k = 1; k < n; k++) S.push(S[k - 1] + Math.hypot(pts[k][0] - pts[k - 1][0], pts[k][1] - pts[k - 1][1]));
-    const W = r.wide.map(v => v / 20);                       // 1 = 8 lanes, 0 = 4 lanes
+    // the cross-section, per point, from the OSM lanes (world/export_web.py cross_section):
+    // WS[sg] a service carriageway on that side (+1 left of +s, -1 right), DV a median
+    // (dual carriageway) or not, LN lanes each way on the main road
+    const WS = { 1: r.wl.map(v => v / 20), [-1]: r.wr.map(v => v / 20) };
+    const DV = r.div.map(v => v / 20), LN = r.ln.map(v => 1 + v / 20);
     const wrap = k => ((k % n) + n) % n;
     for (let k = 0; k < n; k++) {
       const a = pts[wrap(k - 1)], b = pts[wrap(k + 1)];
@@ -1920,8 +1924,11 @@ function poolStream(x, z) {
       TG.push([(b[0] - a[0]) / L, (b[1] - a[1]) / L]); N.push([-TG[k][1], TG[k][0]]);
     }
     // cross-section at point k (distances from the centreline)
-    const S1 = k => I1 + r.sep * W[wrap(k)];                 // outer carriageway starts
-    const EDGE = k => S1(k) + CW * W[wrap(k)];               // outer kerb line
+    const Wv = (k, sg) => WS[sg][wrap(k)];
+    const M0 = k => r.median / 2 * DV[wrap(k)];                       // main carriageway starts
+    const I1 = k => M0(k) + LN[wrap(k)] * r.lane + r.shoulder;         // main carriageway ends
+    const S1 = (k, sg) => I1(k) + r.sep * Wv(k, sg);                  // service carriageway starts
+    const EDGE = (k, sg) => S1(k, sg) + CW * Wv(k, sg);               // outer kerb line
     const at = (k, o, h) => { k = wrap(k); return P2(pts[k][0] + N[k][0] * o, pts[k][1] + N[k][1] * o, h); };
     const sOf = k => k >= n ? LOOP + S[k - n] : S[k];
     // point at distance s (wraps) and offset o
@@ -1930,7 +1937,9 @@ function poolStream(x, z) {
       s = ((s % LOOP) + LOOP) % LOOP;
       const k = kAt(s), k2 = wrap(k + 1), seg = sOf(k + 1) - S[k], f = seg > 0 ? (s - S[k]) / seg : 0;
       return { k, f, x: pts[k][0] + (pts[k2][0] - pts[k][0]) * f, y: pts[k][1] + (pts[k2][1] - pts[k][1]) * f,
-        tx: TG[k][0] + (TG[k2][0] - TG[k][0]) * f, ty: TG[k][1] + (TG[k2][1] - TG[k][1]) * f, w: W[k] + (W[k2] - W[k]) * f };
+        tx: TG[k][0] + (TG[k2][0] - TG[k][0]) * f, ty: TG[k][1] + (TG[k2][1] - TG[k][1]) * f,
+        wl: WS[1][k] + (WS[1][k2] - WS[1][k]) * f, wr: WS[-1][k] + (WS[-1][k2] - WS[-1][k]) * f,
+        dv: DV[k] + (DV[k2] - DV[k]) * f, ln: LN[k] + (LN[k2] - LN[k]) * f };
     };
     const inBridge = s => r.bridges.some(([a, b]) => s >= a && s <= b);
     // flyover (Gwarko - Balkumari): the inner carriageways climb onto a deck; OSM's bridge
@@ -1986,8 +1995,9 @@ function poolStream(x, z) {
     const isGap = (sg, k) => gap[sg > 0 ? 0 : 1][wrap(k)] === 1;
     BUS.onRoad = (x, z) => {
       const y = -z, L = locate(x, y);
-      if (Math.abs(L.o) <= EDGE(L.k) + 0.2) return true;
-      if (isGap(Math.sign(L.o), L.k) && Math.abs(L.o) <= EDGE(L.k) + FOOT + 1) return true;
+      const sg = L.o >= 0 ? 1 : -1;
+      if (Math.abs(L.o) <= EDGE(L.k, sg) + 0.2) return true;
+      if (isGap(sg, L.k) && Math.abs(L.o) <= EDGE(L.k, sg) + FOOT + 1) return true;
       const list = stubHash.get(Math.floor(x / HC) + ',' + Math.floor(y / HC));
       return !!list && list.some(([px, py, hw]) => (px - x) ** 2 + (py - y) ** 2 < hw * hw);
     };
@@ -2099,70 +2109,74 @@ function poolStream(x, z) {
             [s0 / us, a0 / vs + A0], [s1 / us, b0 / vs + B0], [s1 / us, b1 / vs + B1], [s0 / us, a1 / vs + A1]);
         }
       }
-      const narrow = k => W[wrap(k)] === 0 && W[wrap(k + 1)] === 0;
       const c = v => () => v;
       const hk = k => flyH(sOf(k));
-      const elev = k => hk(k) > 0 || hk(k + 1) > 0;          // the inner carriageways are up on the flyover
+      const elev = k => hk(k) > 0 || hk(k + 1) > 0;          // the main carriageways are up on the flyover
+      const undiv = k => DV[wrap(k)] === 0 && DV[wrap(k + 1)] === 0;
       for (const sg of [1, -1]) {
         const gp = k => isGap(sg, k) || isGap(sg, k + 1);
-        // inner carriageway, separator, outer carriageway
-        strip(gAsph, sg, c(M0), c(I1), 0, 0, 8, 8, elev);
-        strip(gAsph, sg, S1, EDGE, 0, 0, 8, 8, narrow);
-        strip(gMed, sg, c(I1), S1, 0.25, 0.25, 2, 2, narrow);
-        for (const [lo, hi, skip] of [[c(M0), c(I1), elev], [S1, EDGE, narrow]]) {
+        const S1s = k => S1(k, sg), EDs = k => EDGE(k, sg);
+        const noSvc = k => Wv(k, sg) === 0 && Wv(k + 1, sg) === 0;
+        // main carriageway, separator, service carriageway
+        strip(gAsph, sg, M0, I1, 0, 0, 8, 8, elev);
+        strip(gAsph, sg, S1s, EDs, 0, 0, 8, 8, noSvc);
+        strip(gMed, sg, I1, S1s, 0.25, 0.25, 2, 2, noSvc);
+        // yellow edge lines; where the road is undivided the two inner ones are the double centre line
+        for (const [lo, hi, skip] of [[M0, I1, elev], [S1s, EDs, noSvc]]) {
           for (const e of [k => lo(k) + 0.3, k => hi(k) - 0.3]) strip(gYel, sg, k => e(k) - 0.06, k => e(k) + 0.06, 0.008, 0.008, 1, 1, skip);
         }
         // kerb faces
-        strip(gKerb, sg, c(M0), c(M0), 0, 0.25, 2, 1, elev);
-        strip(gKerb, sg, c(I1), c(I1), 0, 0.25, 2, 1, narrow);
-        strip(gKerb, sg, S1, S1, 0, 0.25, 2, 1, narrow);
-        strip(gKerb, sg, EDGE, EDGE, 0, 0.2, 2, 1, gp);
+        strip(gKerb, sg, M0, M0, 0, 0.25, 2, 1, k => elev(k) || undiv(k));
+        strip(gKerb, sg, I1, I1, 0, 0.25, 2, 1, noSvc);
+        strip(gKerb, sg, S1s, S1s, 0, 0.25, 2, 1, noSvc);
+        strip(gKerb, sg, EDs, EDs, 0, 0.2, 2, 1, gp);
         // footpath and verge; at side roads the asphalt runs on to meet them
-        strip(gPav, sg, EDGE, k => EDGE(k) + FOOT, 0.2, 0.2, 1.3, 1.3, gp);
-        strip(gVerge, sg, k => EDGE(k) + FOOT, k => EDGE(k) + FOOT + 4, 0.2, -0.05, 3, 3, gp);
-        strip(gAsph, sg, EDGE, k => EDGE(k) + FOOT + 4, 0, 0, 8, 8, k => !gp(k));
+        strip(gPav, sg, EDs, k => EDs(k) + FOOT, 0.2, 0.2, 1.3, 1.3, gp);
+        strip(gVerge, sg, k => EDs(k) + FOOT, k => EDs(k) + FOOT + 4, 0.2, -0.05, 3, 3, gp);
+        strip(gAsph, sg, EDs, k => EDs(k) + FOOT + 4, 0, 0, 8, 8, k => !gp(k));
         // bridge parapets
-        strip(gRail, sg, k => EDGE(k) + FOOT, k => EDGE(k) + FOOT, 0.2, 1.3, 2, 1, k => !inBridge(sOf(k)));
-        // lane dashes 3 m on, 6 m off, at the middle of each carriageway
-        for (const [mid, need] of [[() => M0 + r.shoulder / 2 + r.lane, () => true], [k => S1(k) + r.shoulder / 2 + r.lane, k => W[wrap(k)] > 0.99]]) {
+        strip(gRail, sg, k => EDs(k) + FOOT, k => EDs(k) + FOOT, 0.2, 1.3, 2, 1, k => !inBridge(sOf(k)));
+        // lane dashes 3 m on, 6 m off, between the two lanes of each carriageway
+        for (const [mid, need] of [[k => M0(k) + r.shoulder / 2 + r.lane, k => LN[wrap(k)] > 1.99], [k => S1s(k) + r.shoulder / 2 + r.lane, k => Wv(k, sg) > 0.99]]) {
           for (let s = Math.ceil(sStart / 9) * 9; s < sEnd - 1; s += 9) {
             const A = frame(s), B = frame(s + 3);
             if (!need(A.k) || !need(B.k)) continue;
-            const pa = (F, o) => P2(F.x - F.ty * o, F.y + F.tx * o, 0.01 + (mid(F.k) < I1 ? flyH(sOf(F.k) + F.f * r.step) : 0));
+            const pa = (F, o) => P2(F.x - F.ty * o, F.y + F.tx * o, 0.01 + (Math.abs(o) < I1(F.k) ? flyH(sOf(F.k) + F.f * r.step) : 0));
             const oa = sg * mid(A.k), ob = sg * mid(B.k), d = 0.07;
             gWhite.quad(pa(A, oa - d), pa(B, ob - d), pa(B, ob + d), pa(A, oa + d), [0, 0], [1, 0], [1, 1], [0, 1]);
           }
         }
       }
-      strip(gMed, 1, c(-M0), c(M0), 0.25, 0.25, 2, 2, elev);
+      strip(gMed, 1, k => -M0(k), M0, 0.25, 0.25, 2, 2, k => elev(k) || undiv(k));
       // the flyover: deck, lane markings, parapets, central barrier, fascia / ramp walls, piers
       const gConc = new Geo(), gPier = new Geo();
       {
-        const DW = I1 + 0.3, noE = k => !elev(k), deep = k => hk(k) > 4.5 && hk(k + 1) > 4.5;
+        const DW = k => I1(k) + 0.3, noE = k => !elev(k), deep = k => hk(k) > 4.5 && hk(k + 1) > 4.5;
+        const DWi = k => DW(k) - 0.25, nI1 = k => -I1(k), nDW = k => -DW(k);
         const up = d => k => hk(k) + d;
-        strip(gMed, 1, c(-I1), c(I1), 0.02, 0.02, 2, 2, noE);                       // ground under the deck
+        strip(gMed, 1, nI1, I1, 0.02, 0.02, 2, 2, noE);                             // ground under the deck
         for (const sg of [1, -1]) {
-          strip(gAsph, sg, c(0.3), c(DW), hk, hk, 8, 8, noE);
-          for (const e of [M0 + 0.3, I1 - 0.3]) strip(gYel, sg, c(e - 0.06), c(e + 0.06), up(0.008), up(0.008), 1, 1, noE);
-          strip(gConc, sg, c(DW), c(DW), k => deep(k) ? hk(k) - 1.2 : 0, hk, 3, 3, noE);  // fascia, solid wall on the ramps
-          strip(gConc, sg, c(DW), c(DW), hk, up(1.0), 3, 3, noE);                     // parapet
-          strip(gConc, sg, c(DW - 0.25), c(DW - 0.25), hk, up(1.0), 3, 3, noE);
-          strip(gConc, sg, c(DW - 0.25), c(DW), up(1.0), up(1.0), 3, 3, noE);
+          strip(gAsph, sg, c(0.3), DW, hk, hk, 8, 8, noE);
+          for (const e of [k => M0(k) + 0.3, k => I1(k) - 0.3]) strip(gYel, sg, k => e(k) - 0.06, k => e(k) + 0.06, up(0.008), up(0.008), 1, 1, noE);
+          strip(gConc, sg, DW, DW, k => deep(k) ? hk(k) - 1.2 : 0, hk, 3, 3, noE);  // fascia, solid wall on the ramps
+          strip(gConc, sg, DW, DW, hk, up(1.0), 3, 3, noE);                         // parapet
+          strip(gConc, sg, DWi, DWi, hk, up(1.0), 3, 3, noE);
+          strip(gConc, sg, DWi, DW, up(1.0), up(1.0), 3, 3, noE);
           strip(gConc, sg, c(0.3), c(0.3), hk, up(0.85), 3, 3, noE);                  // central barrier
         }
         strip(gConc, 1, c(-0.3), c(0.3), up(0.85), up(0.85), 3, 3, noE);
-        strip(gConc, 1, c(DW), c(-DW), k => hk(k) - 1.2, k => hk(k) - 1.2, 4, 4, k => !deep(k));   // underside (faces down)
+        strip(gConc, 1, DW, nDW, k => hk(k) - 1.2, k => hk(k) - 1.2, 4, 4, k => !deep(k));         // underside (faces down)
         for (let k = k0; k < k1; k++) {                                              // where the solid ramp becomes a bridge
           if (deep(k) === deep(k - 1) || !elev(k)) continue;
           const h = hk(k) - 1.2;
-          gConc.quad(at(k, -DW, 0), at(k, DW, 0), at(k, DW, h), at(k, -DW, h), [0, 0], [1, 0], [1, 1], [0, 1]);
+          gConc.quad(at(k, -DW(k), 0), at(k, DW(k), 0), at(k, DW(k), h), at(k, -DW(k), h), [0, 0], [1, 0], [1, 1], [0, 1]);
         }
         for (const [a, b] of r.flyovers || []) {                                    // piers every 30 m
           for (let ps = a + 15; ps < b; ps += 30) {
             if (ps < sStart || ps >= sEnd) continue;
             const F = frame(ps), h = flyH(ps) - 1.2, tz = [F.tx, -F.ty], nz = [-F.ty, -F.tx];
             gPier.box(F.x, h / 2, -F.y, tz, nz, 0.7, h / 2, 1.6);
-            gPier.box(F.x, h - 0.35, -F.y, tz, nz, 0.9, 0.35, DW - 1.0);              // pier cap
+            gPier.box(F.x, h - 0.35, -F.y, tz, nz, 0.9, 0.35, DW(F.k) - 1.0);         // pier cap
             poolBox([0.7, h / 2, 1.6], [F.x, h / 2, -F.y], Math.atan2(F.ty, F.tx));
           }
         }
@@ -2199,18 +2213,18 @@ function poolStream(x, z) {
         const tx = (b[0] - a[0]) / L, ty = (b[1] - a[1]) / L, nx = -ty, ny = tx, len = L / 2 + 0.3;
         const yaw = Math.atan2(ty, tx), km = wrap(k + 1);
         const add = (o, hw, h) => poolBox([len, h / 2, hw], [cx + nx * o, h / 2, -(cy + ny * o)], yaw);
-        add(0, M0, 0.25);
+        if (DV[km] > 0.5) add(0, M0(km), 0.25);
         const ha = flyH(sOf(k)), hb = flyH(sOf(k) + L);
         if (ha > 0 || hb > 0) {                         // flyover deck (solid on the ramps), parapets, barrier
-          const hm = (ha + hb) / 2, pitch = Math.atan2(hb - ha, L), th = hm < 4.5 ? Math.max(0.4, hm) : 0.4, DW = I1 + 0.3;
+          const hm = (ha + hb) / 2, pitch = Math.atan2(hb - ha, L), th = hm < 4.5 ? Math.max(0.4, hm) : 0.4, DW = I1(km) + 0.3;
           poolBoxP([len, th / 2, DW], [cx, hm - th / 2, -cy], yaw, pitch);
           for (const o of [DW - 0.12, -(DW - 0.12)]) poolBoxP([len, 0.5, 0.15], [cx + nx * o, hm + 0.5, -(cy + ny * o)], yaw, pitch);
           poolBoxP([len, 0.42, 0.3], [cx, hm + 0.42, -cy], yaw, pitch);
         }
         for (const sg of [1, -1]) {
-          if (W[km] > 0.3) add(sg * (I1 + S1(km)) / 2, r.sep * W[km] / 2, 0.25);
-          if (!isGap(sg, k) && !isGap(sg, k + 1) && !isGap(sg, k + 2)) add(sg * (EDGE(km) + FOOT / 2), FOOT / 2, 0.2);
-          if (inBridge(sOf(k))) add(sg * (EDGE(km) + FOOT), 0.15, 1.3);
+          if (Wv(km, sg) > 0.3) add(sg * (I1(km) + S1(km, sg)) / 2, r.sep * Wv(km, sg) / 2, 0.25);
+          if (!isGap(sg, k) && !isGap(sg, k + 1) && !isGap(sg, k + 2)) add(sg * (EDGE(km, sg) + FOOT / 2), FOOT / 2, 0.2);
+          if (inBridge(sOf(k))) add(sg * (EDGE(km, sg) + FOOT), 0.15, 1.3);
         }
       }
 
@@ -2299,7 +2313,7 @@ function poolStream(x, z) {
         const poleAt = s => {
           const F = frame(s);
           if (isGap(sg, F.k) || isGap(sg, F.k + 1)) return null;
-          const o = sg * (EDGE(F.k) + FOOT - 0.4);
+          const o = sg * (EDGE(F.k, sg) + FOOT - 0.4);
           return { x: F.x - F.ty * o, y: F.y + F.tx * o, tx: F.tx, ty: F.ty };
         };
         const tops = q => [-0.8, -0.3, 0.3, 0.8].map(d => new THREE.Vector3(q.x + q.tx * d, 8.65, -(q.y + q.ty * d)));
@@ -2329,6 +2343,16 @@ function poolStream(x, z) {
       }
       for (let s = 20 + Math.ceil((sStart - 20) / 32) * 32; s < sEnd && s < LOOP - 12; s += 32) {
         const F = frame(s), x = F.x, y = F.y, tz = [F.tx, -F.ty], fh = flyH(s);
+        if (F.dv < 0.5) {                     // no median: a post on the footpath, alternating sides, arm over the road
+          const sg = Math.round(s / 32) % 2 ? 1 : -1, o = EDGE(F.k, sg) + 0.5, nx = -F.ty * sg, ny = F.tx * sg, nz = [nx, -ny];
+          const px = x + nx * o, py = y + ny * o;
+          lightG.box(px, 4.0, -py, tz, nz, 0.09, 4.0, 0.09, grey);
+          lightG.box(px - nx * 1.2, 8.0, -(py - ny * 1.2), nz, tz, 1.2, 0.04, 0.04, grey);
+          lightG.box(px - nx * 2.3, 7.93, -(py - ny * 2.3), nz, tz, 0.35, 0.06, 0.14, lamp);
+          lights.push(new THREE.Vector3(px - nx * 2.3, 7.85, -(py - ny * 2.3)));
+          poolBox([0.12, 4.0, 0.12], [px, 4.0, -py]);
+          continue;
+        }
         lightG.box(x, 5.25 + fh, -y, tz, [-tz[1], tz[0]], 0.09, 5.0, 0.09, grey);
         for (const sg of [1, -1]) {
           const nx = -F.ty * sg, ny = F.tx * sg, nz = [nx, -ny];
@@ -2345,7 +2369,7 @@ function poolStream(x, z) {
           if (rand() > 0.35) continue;
           const F = frame(s);
           if (isGap(sg, F.k) || isGap(sg, F.k + 1) || inBridge(s)) continue;
-          const o = sg * (EDGE(F.k) + FOOT + 1 + rand() * 2);
+          const o = sg * (EDGE(F.k, sg) + FOOT + 1 + rand() * 2);
           spots.push([F.x - F.ty * o, F.y + F.tx * o, 0.6 + rand() * 0.6]);
         }
         if (spots.length) {
@@ -2369,7 +2393,7 @@ function poolStream(x, z) {
         const postG = new Geo();
         for (const b of boards) {
           if (b.s < sStart || b.s >= sEnd) continue;
-          const F = frame(b.s), o = b.sg * (EDGE(F.k) + FOOT * 0.55);
+          const F = frame(b.s), o = b.sg * (EDGE(F.k, b.sg) + FOOT * 0.55);
           const x = F.x - F.ty * o, y = F.y + F.tx * o;
           const fx = -F.tx * b.sg, fy = -F.ty * b.sg;           // toward the traffic coming on that side
           const ax = [-fy, fx];                                 // board's left-to-right as seen by that traffic
@@ -2536,9 +2560,13 @@ function poolStream(x, z) {
     TYPES.forEach(makeType);
 
     // lane centres (distance from the centreline): 0,1 inner carriageway, 2,3 outer
-    const laneOff = (lane, F) => lane < 2 ? M0 + r.shoulder / 2 + r.lane * (lane + 0.5)
-      : I1 + r.sep * F.w + r.shoulder / 2 + r.lane * (lane - 1.5);
-    const lanesAt = w => w > 0.999 ? 4 : 2;
+    // lanes (distance from the centreline, on side sg): 0, 1 the main carriageway, 2, 3 the service one
+    const fw = (F, sg) => sg > 0 ? F.wl : F.wr;
+    const fM0 = F => r.median / 2 * F.dv, fI1 = F => fM0(F) + F.ln * r.lane + r.shoulder;
+    const laneOff = (lane, F, sg) => lane < 2 ? fM0(F) + r.shoulder / 2 + r.lane * (lane + 0.5)
+      : fI1(F) + r.sep * fw(F, sg) + r.shoulder / 2 + r.lane * (lane - 1.5);
+    const lanesOpen = (F, sg) => [0, ...(F.ln > 1.99 ? [1] : []), ...(fw(F, sg) > 0.999 ? [2, 3] : [])];
+    const laneEnds = (lane, F, sg) => lane === 1 ? F.ln < 1.3 : lane >= 2 ? fw(F, sg) < 0.4 : false;
     const slow = t => t.name === 'bus' || t.name === 'truck' || t.name === 'tempo';
     const cars = [];
     TYPES.forEach(t => { for (let i = 0; i < t.n; i++) cars.push({ t, i, s: 0, dir: 1, lane: 0, lat: 0, v: 0, v0: 10, wob: 0, stop: 0, body: null, brake: false, lc: 0, gap: 1e9, vl: 0, want: 0, end: 1e9 }); });
@@ -2551,11 +2579,11 @@ function poolStream(x, z) {
     function place(c, sNew) {
       for (let tries = 0; tries < 12; tries++) {
         const dir = rand2() < 0.5 ? 1 : -1, s = ((sNew + (tries ? (rand2() - 0.5) * 120 : 0)) % LOOP + LOOP) % LOOP;
-        const F = frame(s), nl = lanesAt(F.w);
-        let lane = Math.floor(rand2() * nl);
-        if (slow(c.t)) lane = nl === 4 ? 3 : 1;                 // slow traffic keeps left
+        const F = frame(s), open = lanesOpen(F, dir);
+        let lane = open[Math.floor(rand2() * open.length)];
+        if (slow(c.t)) lane = open[open.length - 1];               // slow traffic keeps left
         const wob = c.t.name === 'bike' ? (rand2() - 0.5) * 1.6 : 0;
-        const lat = laneOff(lane, F) + wob, ds = rel(s);
+        const lat = laneOff(lane, F, dir) + wob, ds = rel(s);
         // clear of the bus and of the others in the lane
         if (Math.abs(ds) < 30) continue;
         if (cars.some(o => o !== c && o.dir === dir && Math.abs(o.lat - lat) < 2.2 && Math.abs(rel(o.s) - ds) < (o.t.L + c.t.L) / 2 + 6)) continue;
@@ -2577,34 +2605,39 @@ function poolStream(x, z) {
       const F0 = frame(busS);
       busV = bus.chassis.velocity.x * F0.tx - bus.chassis.velocity.z * F0.ty;     // bus speed along +s
       // is the lane at lat free for c (the player's bus counts as traffic too)?
-      const laneFree = (c, lat) => {
-        const p = rel(c.s), bp = c.dir * (rel(busS) - p);
-        if (Math.abs(c.dir * busO - lat) < 3 && bp < (c.t.L + 11) / 2 + 10 && -bp < (c.t.L + 11) / 2 + 8) return false;
+      // tight: merging at walking pace into a queue needs less room
+      const laneFree = (c, lat, tight = false) => {
+        const p = rel(c.s), bp = c.dir * (rel(busS) - p), ahead = tight ? 1.5 : 8, behind = tight ? 1 : 6;
+        if (Math.abs(c.dir * busO - lat) < 3 && bp < (c.t.L + 11) / 2 + ahead + 2 && -bp < (c.t.L + 11) / 2 + behind + 2) return false;
         return cars.every(o => o === c || o.dir !== c.dir || Math.min(Math.abs(o.lat - lat), Math.abs(o.want - lat)) > (o.t.Wd + c.t.Wd) / 2 + 0.3 ||
-          c.dir * (rel(o.s) - p) > (c.t.L + o.t.L) / 2 + 8 || c.dir * (p - rel(o.s)) > (c.t.L + o.t.L) / 2 + 6);
+          c.dir * (rel(o.s) - p) > (c.t.L + o.t.L) / 2 + ahead || c.dir * (p - rel(o.s)) > (c.t.L + o.t.L) / 2 + behind);
       };
-      // lanes: leave the outer carriageway where it tapers away; pass slow traffic
+      // lanes: leave a lane that ends ahead (the service carriageway or the second main lane
+      // tapering away), zip in when there is room or wait at its end; pass slow traffic
       for (const c of cars) {
-        const F = frame(c.s);
-        c.lc -= dt; c.end = 1e9;
-        if (c.lane >= 2) {
+        const F = frame(c.s), sg = c.dir;
+        c.lc -= dt; c.end = 1e9; c.into = null;
+        if (c.lane > 0) {
           let d = 0;
-          while (d < 200 && frame(c.s + c.dir * d).w >= 0.4) d += 8;
+          while (d < 200 && !laneEnds(c.lane, frame(c.s + c.dir * d), sg)) d += 8;
           if (d < 200) {
-            c.end = d;                                    // the outer lanes end d metres ahead
-            if (F.w < 0.999 && c.lc <= 0) {
-              if (laneFree(c, laneOff(1, F)) || d < 6) { c.lane = 1; c.lc = 3; c.end = 1e9; } else c.lc = 0.4;
+            c.end = d;
+            const into = c.lane >= 2 && F.ln > 1.6 ? 1 : 0;
+            const taper = c.lane === 1 ? F.ln < 1.999 : fw(F, sg) < 0.999;
+            c.wait = c.v < 0.5 && d < 30 ? (c.wait || 0) + dt : 0;
+            if (d < 60) c.into = laneOff(into, F, sg);          // the lane it will join lets it in (zip)
+            if ((taper || d < 40) && c.lc <= 0) {
+              const tight = d < 30 || c.v < 3;
+              if (laneFree(c, c.into ?? laneOff(into, F, sg), tight) || c.wait > 6) { c.lane = into; c.lc = 3; c.end = 1e9; c.into = null; c.wait = 0; } else c.lc = 0.4;
             }
           }
-        } else if (c.lc <= 0 && c.gap < 25 && c.vl < c.v0 * 0.7 && c.stop <= 0) {
-          const l = c.lane === 0 ? 1 : 0;
-          if (laneFree(c, laneOff(l, F))) { c.lane = l; c.lc = 4 + rand2() * 4; } else c.lc = 1;
         }
-        if (c.lane >= 2 && c.lc <= 0 && c.gap < 25 && c.vl < c.v0 * 0.7 && c.stop <= 0 && c.end > 300) {
-          const l = c.lane === 2 ? 3 : 2;
-          if (laneFree(c, laneOff(l, F))) { c.lane = l; c.lc = 4 + rand2() * 4; } else c.lc = 1;
+        if (c.end > 300 && c.lc <= 0 && c.gap < 25 && c.vl < c.v0 * 0.7 && c.stop <= 0) {
+          const Fa = frame(c.s + c.dir * 120), open = lanesOpen(F, sg).filter(l => lanesOpen(Fa, sg).includes(l));
+          const l = [c.lane - 1, c.lane + 1].find(l => open.includes(l) && (l >= 2) === (c.lane >= 2));
+          if (l !== undefined && laneFree(c, laneOff(l, F, sg))) { c.lane = l; c.lc = 4 + rand2() * 4; } else c.lc = 1;
         }
-        c.want = laneOff(c.lane, F) + c.wob;
+        c.want = laneOff(c.lane, F, sg) + c.wob;
       }
       // leaders: per direction, sorted by progress; a vehicle moving across counts in both lanes
       for (const dir of [1, -1]) {
@@ -2615,7 +2648,8 @@ function poolStream(x, z) {
           let gap = 1e9, vl = c.v0;
           for (let j = i + 1; j < Math.min(list.length, i + 25); j++) {
             const o = list[j], lim = (o.c.t.Wd + c.t.Wd) / 2 + 0.35;
-            if (Math.min(Math.abs(o.c.lat - c.lat), Math.abs(o.c.want - c.lat), Math.abs(o.c.lat - c.want)) < lim) { gap = o.p - p - (o.c.t.L + c.t.L) / 2; vl = o.c.v; break; }
+            const zip = o.c.into !== null && o.c.into !== undefined && Math.abs(o.c.into - c.lat) < lim;
+            if (zip || Math.min(Math.abs(o.c.lat - c.lat), Math.abs(o.c.want - c.lat), Math.abs(o.c.lat - c.want)) < lim) { gap = o.p - p - (o.c.t.L + c.t.L) / 2; vl = o.c.v; break; }
           }
           const bg = busP - p - (11 + c.t.L) / 2;
           if (bg > -8 && bg < gap && Math.abs(busLat - c.lat) < (2.5 + c.t.Wd) / 2 + 0.4) { gap = Math.max(0.1, bg); vl = Math.max(0, dir * busV); }
@@ -2634,9 +2668,9 @@ function poolStream(x, z) {
         c.v = Math.max(0, c.v + acc * dt);
         c.s = ((c.s + c.dir * c.v * dt) % LOOP + LOOP) % LOOP;
         const F = frame(c.s);
-        const want = laneOff(c.lane, F) + c.wob;            // the outer lanes squeeze in where they taper
+        const want = laneOff(c.lane, F, c.dir) + c.wob;     // lanes squeeze in where they taper
         c.want = want;
-        const minLat = M0 + 0.35 + c.t.Wd / 2, maxLat = (c.lane >= 2 ? I1 + (r.sep + CW) * F.w : I1) - 0.35 - c.t.Wd / 2;
+        const minLat = fM0(F) + 0.35 + c.t.Wd / 2, maxLat = (c.lane >= 2 ? fI1(F) + (r.sep + CW) * fw(F, c.dir) : fI1(F)) - 0.35 - c.t.Wd / 2;
         c.lat += Math.max(-1.3 * dt, Math.min(1.3 * dt, want - c.lat));
         c.lat = Math.min(Math.max(c.lat, minLat), Math.max(minLat, maxLat));
         // recycle the ones left far behind or far ahead to the edges of the window
@@ -2678,7 +2712,7 @@ function poolStream(x, z) {
       const pB = places.find(p => p.en === 'Balkhu'), ks = r.start;
       const dirB = pB && ((pB.s - S[ks] + LOOP) % LOOP) < LOOP / 2 ? 1 : -1;
       const k = wrap(ks + dirB * Math.round(80 / r.step));
-      const o = dirB * (S1(k) + r.shoulder / 2 + r.lane / 2);
+      const o = dirB * (S1(k, dirB) + r.shoulder / 2 + r.lane / 2);
       KTM.start = { x: pts[k][0] + N[k][0] * o, z: -(pts[k][1] + N[k][1] * o), heading: Math.atan2(dirB * TG[k][0], -dirB * TG[k][1]) };
     }
     chunkStream(KTM.start.x, KTM.start.z, true);

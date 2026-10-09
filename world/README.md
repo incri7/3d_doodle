@@ -56,11 +56,15 @@ python3 web/make_drive.py                # -> web/drive.html (driving page + web
 ```
 
 Main page -> **Play**. The whole loop (27.3 km centreline from OpenStreetMap,
-`world/ring_loop.py`) is drivable: 8 lanes from Kalanki via Balkhu to
-Koteshwor, 4 lanes with a median round the north, 287 side roads joining
-through gaps in the footpath, river bridges with parapets. The bus starts at
-Kalanki in the outer left lane. The road is streamed in 200 m chunks
-(meshes and colliders) around the bus.
+`world/ring_loop.py`) is drivable, and its cross-section follows the OSM
+lanes point by point: Kalanki -> Koteshwor is a 2+2 dual carriageway with a
+one-way 2-lane service carriageway on each side (the parallel primary roads);
+the north is one undivided 4-lane carriageway (double yellow centre line,
+street lights on the footpaths); near Tinkune it is 1 lane each way. The
+Gwarko flyover (the 1.08 km OSM bridge) is elevated on piers with ramps. 289
+side roads join through gaps in the footpath; river bridges have parapets.
+The bus starts at Kalanki. The road is streamed in 200 m chunks (meshes and
+colliders) around the bus.
 
 - Place boards: a blue board names each of 21 places (Nepali and English)
   on both carriageways; a green board 260 m on lists the next two places

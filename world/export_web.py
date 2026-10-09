@@ -1,8 +1,9 @@
 """Export the whole Kathmandu Ring Road loop for the web driving page.
 
 Writes web/ktm_map.json and web/ktm_sat.jpg (Sentinel-2):
-  road     closed centreline every 4 m, per-point "wide" (8 lanes Kalanki ->
-           Koteshwor, 4 lanes elsewhere), bridge ranges, side-road stubs
+  road     closed centreline every 4 m; per point, from the OSM lanes: service
+           carriageways each side, divided or not, lanes each way; bridges,
+           the flyover, side-road stubs
   places   place boards (OpenStreetMap names via Nominatim, world/fetch_places.py)
   near     building footprints within NEAR m, with oriented-box colliders
   far      buildings NEAR..FAR m as boxes
@@ -31,7 +32,6 @@ NEAR = 100          # detailed buildings out to this distance from the centrelin
 FAR = 400           # box buildings out to this distance
 TER = 2600          # terrain extent around the loop
 TSTEP = 40.0        # terrain grid step (m)
-NARROW_EDGE = S.I1  # kerb line where the road has 4 lanes
 STUB = 60           # side roads drawn this far out from the kerb
 SIDE_CLS = {"trunk": 7.5, "primary": 7.5, "secondary": 6.5, "tertiary": 6, "unclassified": 5,
             "residential": 5, "trunk_link": 6, "primary_link": 6, "secondary_link": 5.5, "tertiary_link": 5}
@@ -136,6 +136,127 @@ def places(meta, loop, o):
     return out
 
 
+def q20(a):
+    return [int(v) for v in np.clip(np.round(np.asarray(a) * 20), 0, 20)]
+
+
+def smooth_loop(v, r):
+    k = np.ones(2 * r + 1) / (2 * r + 1)
+    return np.convolve(np.concatenate([v[-r:], v, v[:r]]), k, mode="valid")
+
+
+def close_gaps(v, n):
+    """Fill runs of False shorter than n points between True runs (closed loop)."""
+    v = v.copy()
+    if not v.any():
+        return v
+    start = int(np.argmax(v))
+    r = np.roll(v, -start)
+    i = 0
+    while i < len(r):
+        if not r[i]:
+            j = i
+            while j < len(r) and not r[j]:
+                j += 1
+            if j - i < n and j < len(r):
+                r[i:j] = True
+            i = j
+        else:
+            i += 1
+    return np.roll(r, start)
+
+
+def drop_short(v, n):
+    v = v.copy()
+    i = 0
+    while i < len(v):
+        if v[i]:
+            j = i
+            while j < len(v) and v[j]:
+                j += 1
+            if j - i < n:
+                v[i:j] = False
+            i = j
+        else:
+            i += 1
+    return v
+
+
+def cross_section(meta, loop, o, lines):
+    """What OpenStreetMap says at each centreline point:
+    wl / wr  a one-way 2-lane service carriageway beside the main road on the
+             left (+) / right (-) side: the parallel primary roads Kalanki -> Koteshwor
+    div      the main road is a dual carriageway (two one-way ways) with a median,
+             rather than one undivided two-way way
+    ln       lanes each way on the main road (two-way lanes / 2, or the one-way lanes)"""
+    n = loop.n
+    ring = {e["id"] for e, _ in lines}
+    side = {1: np.zeros(n, bool), -1: np.zeros(n, bool)}
+    for rd in meta["roads"]:
+        if rd["cls"] != "primary":           # (the relation itself carries a few of them near Kalanki)
+            continue
+        p = ring_loop.resample(np.asarray(rd["pts"]) - o, 2.0, closed=False)
+        if len(p) < 3:
+            continue
+        k, off = loop.offset(p)
+        d = np.gradient(p, axis=0)
+        d /= np.linalg.norm(d, axis=1)[:, None] + 1e-9
+        m = (np.abs(np.sum(d * loop.T[k], 1)) > 0.94) & (np.abs(off) > 7) & (np.abs(off) < 24)
+        for kk, oo in zip(k[m], off[m]):
+            side[1 if oo > 0 else -1][kk] = True
+    out = {}
+    for sg, name in ((1, "wl"), (-1, "wr")):
+        v = drop_short(close_gaps(side[sg], 50), 25)          # bridge junction gaps < 200 m; ignore stubs < 100 m
+        out[name] = np.clip(smooth_loop(v.astype(float), 15), 0, 1)
+    dual = {1: np.zeros(n, bool), -1: np.zeros(n, bool)}
+    single = np.zeros(n, bool)
+    lanes = np.full(n, np.nan)
+    for e, l in lines:
+        t = e.get("tags", {})
+        p = ring_loop.resample(np.asarray(l.coords) - o, 2.0, closed=False)
+        if len(p) < 2:
+            continue
+        k, off = loop.offset(p)
+        try:
+            nl = float(t.get("lanes"))
+        except (TypeError, ValueError):
+            nl = None
+        if t.get("oneway") == "yes":
+            for kk, oo in zip(k, off):
+                if 1.0 < abs(oo) < 10:
+                    dual[1 if oo > 0 else -1][kk] = True
+            per = min(nl, 2) if nl else 2
+        else:
+            single[k[np.abs(off) < 3]] = True
+            per = nl / 2 if nl else 2
+        lanes[k] = np.where(np.isnan(lanes[k]), per, np.minimum(lanes[k], per))
+    div = close_gaps(dual[1] & dual[-1] & ~single, 15) | (dual[1] & dual[-1])
+    div = drop_short(div, 10)
+    out["div"] = np.clip(smooth_loop(div.astype(float), 5), 0, 1)
+    # lanes: fill points no way covers from the neighbours, then taper over ~40 m
+    idx = np.nonzero(~np.isnan(lanes))[0]
+    lanes = np.interp(np.arange(n), idx, lanes[idx], period=n)
+    lanes = np.clip(np.round(lanes), 1, 2)
+    out["ln"] = np.clip(smooth_loop(lanes, 5), 1, 2)
+    for kname in ("wl", "wr", "div"):
+        v = out[kname] > 0.5
+        runs = []
+        i = 0
+        while i < n:
+            if v[i]:
+                j = i
+                while j < n and v[j]:
+                    j += 1
+                runs.append((round(loop.s[i]), round(loop.s[j - 1])))
+                i = j
+            else:
+                i += 1
+        print(kname, runs)
+    one = np.nonzero(out["ln"] < 1.5)[0]
+    print("1 lane each way at", sorted({round(loop.s[i] / 100) * 100 for i in one}))
+    return out
+
+
 def main():
     npz = np.load(os.path.join(DATA, "prep.npz"))
     meta = json.load(open(os.path.join(DATA, "prep.json")))
@@ -147,23 +268,17 @@ def main():
     P = loop.P
     print(f"loop {loop.L:.0f} m, {loop.n} points")
 
-    # --- places and the 8-lane stretch (Kalanki -> Balkhu -> Koteshwor, the southern arc) -----------
+    # --- places ----------------------------------------------------------------------------------
     pl = places(meta, loop, o)
     for q in pl:
         print(f"  {loop.s[q['k']]:7.0f} m  {q['en']}  {q['ne']}")
     kk = {q["en"]: q["k"] for q in pl}
-    a, b = loop.s[kk["Kalanki"]], loop.s[kk["Koteshwor"]]
-    sb = loop.s[kk["Balkhu"]]
-    if loop.ds(a, sb) > loop.ds(a, b):       # go the way that passes Balkhu
-        a, b = b, a
-    a, b = a - 150, b + 150                   # the widening runs past both junctions
-    inside = np.array([loop.ds(a, s) <= loop.ds(a, b) for s in loop.s], float)
-    # 120 m transitions
-    r = 15
-    k = np.ones(2 * r + 1) / (2 * r + 1)
-    wide = np.convolve(np.concatenate([inside[-r:], inside, inside[:r]]), k, mode="valid")
-    wide = np.clip(np.round(wide * 20) / 20, 0, 1)
-    edge = NARROW_EDGE + (S.EDGE - NARROW_EDGE) * wide
+
+    # --- cross-section from the OSM lanes, per point and per side -------------------------------
+    sec = cross_section(meta, loop, o, lines)
+    wl, wr, div, ln = sec["wl"], sec["wr"], sec["div"], sec["ln"]
+    inner = div * S.MEDIAN / 2 + ln * S.LANE + S.SHOULDER
+    edge = inner + np.maximum(wl, wr) * (S.SEP + S.CW)          # outer kerb line (the wider side)
 
     # --- bridges: short ones cross rivers; the long ones are the flyover's elevated deck -------------
     def merged(ranges, pad):
@@ -295,7 +410,7 @@ def main():
         "about": "Kathmandu Ring Road. OpenStreetMap (ODbL), Google Open Buildings (CC BY 4.0), "
                  "Copernicus GLO-30 DEM, Sentinel-2 (contains modified Copernicus Sentinel data 2026).",
         "road": {"pts": np.round(P, 2).ravel().tolist(), "step": STEP, "loop": round(loop.L, 1),
-                 "wide": [int(v * 20) for v in wide], "bridges": [[round(a, 1), round(b, 1)] for a, b in bridges],
+                 "wl": q20(wl), "wr": q20(wr), "div": q20(div), "ln": q20(ln - 1), "bridges": [[round(a, 1), round(b, 1)] for a, b in bridges],
                  "flyovers": [[round(a, 1), round(b, 1)] for a, b in flyovers],
                  "median": S.MEDIAN, "lane": S.LANE, "shoulder": S.SHOULDER, "sep": S.SEP, "foot": S.FOOT,
                  "start": int(kk["Kalanki"])},
