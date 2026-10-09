@@ -928,70 +928,147 @@ function poolStream(x, z) {
     const WHITE = new THREE.Color(1, 1, 1), GLASS = new THREE.Color(0x1a2128), TYRE = new THREE.Color(0x151515), METAL = new THREE.Color(0x9a9c9f),
       JACKET = new THREE.Color(0x2a2c33), WOOD = new THREE.Color(0x8b5a2b), BLACK = new THREE.Color(0x222222);
     const X = [1, 0], Z = [0, 1];
+    const RED_PLATE = new THREE.Color(0xb3191d), BLACK_PLATE = new THREE.Color(0x111111), CHROME = new THREE.Color(0xb8bcc0);
+    // a side profile (x forward, y up) extruded across the vehicle, z = -hw..hw; local -z is its left
+    const cen = P => P.reduce((a, p) => [a[0] + p[0] / P.length, a[1] + p[1] / P.length], [0, 0]);
+    function tri(g, a, b, c, col) {                     // one triangle, as given
+      const n = g.p.length / 3;
+      for (const v of [a, b, c]) { g.p.push(v[0], v[1], v[2]); g.uv.push(0, 0); g.c.push(col.r, col.g, col.b); }
+      g.i.push(n, n + 1, n + 2);
+    }
+    function plateXY(g, P, z, out, col) {                // a flat polygon in the x-y plane at z, facing +z (out > 0) or -z
+      const sh = P.map(p => new THREE.Vector2(p[0], p[1]));
+      const ccw = !THREE.ShapeUtils.isClockWise(sh);
+      for (const t of THREE.ShapeUtils.triangulateShape(sh, [])) {
+        let [i, j, k] = t;
+        const cross = (P[j][0] - P[i][0]) * (P[k][1] - P[i][1]) - (P[j][1] - P[i][1]) * (P[k][0] - P[i][0]);
+        if ((cross > 0) !== (out > 0)) [j, k] = [k, j];
+        tri(g, [...P[i], z], [...P[j], z], [...P[k], z], col);
+      }
+    }
+    function extrude(g, P, hw, col) {
+      plateXY(g, P, hw, 1, col); plateXY(g, P, -hw, -1, col);
+      const C = cen(P);
+      for (let i = 0; i < P.length; i++) {
+        const a = P[i], b = P[(i + 1) % P.length], dx = b[0] - a[0], dy = b[1] - a[1];
+        let n = [dy, -dx];
+        if (n[0] * ((a[0] + b[0]) / 2 - C[0]) + n[1] * ((a[1] + b[1]) / 2 - C[1]) < 0) n = [-dy, dx];
+        const A = new THREE.Vector3(a[0], a[1], hw), B = new THREE.Vector3(b[0], b[1], hw), Cc = new THREE.Vector3(b[0], b[1], -hw), Dd = new THREE.Vector3(a[0], a[1], -hw);
+        // wind so the face looks along n
+        const fn = new THREE.Vector3().subVectors(B, A).cross(new THREE.Vector3().subVectors(Dd, A));
+        if (fn.x * n[0] + fn.y * n[1] >= 0) g.quad(A, B, Cc, Dd, [0, 0], [1, 0], [1, 1], [0, 1], col);
+        else g.quad(A, Dd, Cc, B, [0, 0], [0, 1], [1, 1], [1, 0], col);
+      }
+    }
+    // glass across the vehicle along a profile segment (windscreen, rear window), standing just proud of the body
+    function band(g, P, a, b, hw, col) {
+      const C = cen(P), dx = b[0] - a[0], dy = b[1] - a[1], L = Math.hypot(dx, dy);
+      let n = [dy / L, -dx / L];
+      if (n[0] * ((a[0] + b[0]) / 2 - C[0]) + n[1] * ((a[1] + b[1]) / 2 - C[1]) < 0) n = [-n[0], -n[1]];
+      const o = 0.012, A = [a[0] + n[0] * o, a[1] + n[1] * o], B = [b[0] + n[0] * o, b[1] + n[1] * o];
+      const v = (p, z) => new THREE.Vector3(p[0], p[1], z);
+      const q = [v(A, hw), v(B, hw), v(B, -hw), v(A, -hw)];
+      const fn = new THREE.Vector3().subVectors(q[1], q[0]).cross(new THREE.Vector3().subVectors(q[3], q[0]));
+      if (fn.x * n[0] + fn.y * n[1] >= 0) g.quad(...q, [0, 0], [1, 0], [1, 1], [0, 1], col); else g.quad(q[0], q[3], q[2], q[1], [0, 0], [0, 1], [1, 1], [1, 0], col);
+    }
+    const sideGlass = (g, W, hw) => { plateXY(g, W, hw + 0.006, 1, GLASS); plateXY(g, W, -hw - 0.006, -1, GLASS); };
+    // Nepali number plates: red for private vehicles, black for public transport and goods
+    const plates = (g, xf, xr, y, hw, col) => { for (const x of [xf, xr]) g.box(x, y, 0, X, Z, 0.012, 0.065, hw, col); };
     // body (tinted per vehicle), details (fixed colours), head lamps, tail lamps; local +x = forward
     function makeType(t) {
       const body = new Geo(), det = new Geo(), head = new Geo(), tail = new Geo();
       const L = t.L, w = t.Wd / 2;
-      const wheels = (xs, r, wz) => { for (const x of xs) for (const z of [-wz, wz]) det.wheel(x, r, z, r, 0.22, TYRE); };
+      const wheels = (xs, r, wz, tw = 0.22) => { for (const x of xs) for (const z of [-wz, wz]) det.wheel(x, r, z, r, tw, TYRE); };
       const pair = (g, x, y, z, hx, hy, hz) => { g.box(x, y, z, X, Z, hx, hy, hz, WHITE); g.box(x, y, -z, X, Z, hx, hy, hz, WHITE); };
-      if (t.name === 'bike') {
+      const mirrors = (x, y) => { for (const z of [-(w + 0.1), w + 0.1]) det.box(x, y, z, X, Z, 0.05, 0.07, 0.08, BLACK); };
+      if (t.name === 'bike') {                                  // a 150 cc commuter bike and its rider
         det.wheel(0.68, 0.3, 0, 0.3, 0.1, TYRE); det.wheel(-0.62, 0.3, 0, 0.3, 0.12, TYRE);
-        body.box(0.05, 0.62, 0, X, Z, 0.55, 0.16, 0.16, WHITE);            // tank and side panels
-        det.box(-0.35, 0.82, 0, X, Z, 0.4, 0.06, 0.15, JACKET);            // seat
-        det.box(0.6, 0.85, 0, X, Z, 0.05, 0.3, 0.04, METAL);               // forks
-        det.box(0.62, 1.12, 0, X, Z, 0.03, 0.03, 0.34, METAL);             // handlebar
-        det.box(-0.2, 1.2, 0, X, Z, 0.17, 0.33, 0.2, JACKET);              // rider
-        det.box(0.1, 1.08, 0, X, Z, 0.28, 0.05, 0.22, JACKET);             // arms
-        det.box(-0.3, 0.75, 0, X, Z, 0.3, 0.09, 0.2, new THREE.Color(0x30343d));     // legs
-        body.box(-0.18, 1.67, 0, X, Z, 0.15, 0.14, 0.13, WHITE);           // helmet
-        head.box(0.74, 0.98, 0, X, Z, 0.03, 0.06, 0.07, WHITE);
-        tail.box(-0.82, 0.8, 0, X, Z, 0.02, 0.04, 0.08, WHITE);
-      } else if (t.name === 'car' || t.name === 'suv') {
-        const suv = t.name === 'suv', r = suv ? 0.36 : 0.3, top = t.Hh, cab = L * (suv ? 0.36 : 0.28);
-        const ch = (top - r - 0.84) / 2;
-        body.box(0, r + 0.42, 0, X, Z, L / 2, 0.42, w, WHITE);
-        body.box(-L * 0.08, r + 0.84 + ch, 0, X, Z, cab, ch, w - 0.08, WHITE);
-        det.box(-L * 0.08, r + 0.84 + ch + 0.02, 0, X, Z, cab + 0.02, ch - 0.08, w - 0.06, GLASS);
-        det.box(0, r + 0.08, 0, X, Z, L / 2 + 0.03, 0.08, w + 0.01, BLACK);          // bumpers and sills
-        wheels([L * 0.32, -L * 0.32], r, w - 0.1);
-        pair(head, L / 2 + 0.01, r + 0.55, w - 0.3, 0.02, 0.07, 0.17);
-        pair(tail, -L / 2 - 0.01, r + 0.6, w - 0.2, 0.02, 0.08, 0.12);
-      } else if (t.name === 'micro') {
-        body.box(0, 1.25, 0, X, Z, L / 2, 0.92, w, WHITE);
-        det.box(0.1, 1.6, 0, X, Z, L / 2 - 0.05, 0.32, w + 0.01, GLASS);
-        det.box(0, 0.98, 0, X, Z, L / 2 + 0.005, 0.09, w + 0.012, new THREE.Color(0xb3202a));       // stripe
-        det.box(0, 0.38, 0, X, Z, L / 2 + 0.03, 0.08, w + 0.01, BLACK);
-        wheels([L * 0.34, -L * 0.3], 0.34, w - 0.12);
-        pair(head, L / 2 + 0.01, 0.75, w - 0.3, 0.02, 0.08, 0.16);
-        pair(tail, -L / 2 - 0.01, 0.85, w - 0.12, 0.02, 0.14, 0.08);
-      } else if (t.name === 'bus') {
-        body.box(0, 1.85, 0, X, Z, L / 2, 1.3, w, WHITE);
-        det.box(0.2, 2.3, 0, X, Z, L / 2 - 0.3, 0.5, w + 0.01, GLASS);
-        det.box(L / 2 - 0.02, 2.15, 0, X, Z, 0.03, 0.75, w - 0.12, GLASS);
-        det.box(0, 1.3, 0, X, Z, L / 2 + 0.005, 0.12, w + 0.012, new THREE.Color(0xf2f2ee));
-        det.box(0, 3.25, -0.2, X, Z, L * 0.35, 0.1, w - 0.3, new THREE.Color(0x3a3a3a));          // roof rack
-        det.box(0, 0.55, 0, X, Z, L / 2 + 0.03, 0.1, w + 0.01, BLACK);
-        wheels([L * 0.3, -L * 0.25], 0.5, w - 0.2);
-        pair(head, L / 2 + 0.01, 0.95, w - 0.35, 0.02, 0.1, 0.2);
-        pair(tail, -L / 2 - 0.01, 1.0, w - 0.2, 0.02, 0.2, 0.1);
-      } else if (t.name === 'truck') {
-        body.box(L / 2 - 1.0, 1.75, 0, X, Z, 1.0, 1.2, w, WHITE);                                 // cab
-        det.box(L / 2 - 0.02, 2.2, 0, X, Z, 0.03, 0.45, w - 0.15, GLASS);
-        det.box(-0.95, 1.85, 0, X, Z, L / 2 - 1.05, 1.15, w + 0.02, WOOD);                          // high wooden cargo body
-        det.box(-0.95, 0.72, 0, X, Z, L / 2 - 1.05, 0.08, w - 0.2, BLACK);
-        det.box(L / 2 - 1.0, 3.05, 0, X, Z, 1.0, 0.12, w, new THREE.Color(0xf2c230));             // decorated cab top
-        wheels([L / 2 - 1.2, -L * 0.18, -L * 0.33], 0.5, w - 0.22);
-        pair(head, L / 2 + 0.01, 0.95, w - 0.35, 0.02, 0.1, 0.18);
-        pair(tail, -L / 2 + 0.08, 0.75, w - 0.2, 0.02, 0.08, 0.12);
-      } else {                                                                                      // Safa tempo
-        body.box(-0.2, 1.1, 0, X, Z, L / 2 - 0.2, 0.75, w, WHITE);
-        body.box(L / 2 - 0.35, 0.95, 0, X, Z, 0.35, 0.6, w - 0.15, WHITE);
-        det.box(L / 2 - 0.2, 1.4, 0, X, Z, 0.21, 0.25, w - 0.2, GLASS);
-        det.box(-0.3, 1.45, 0, X, Z, L / 2 - 0.4, 0.25, w + 0.01, GLASS);
-        det.box(-0.2, 1.9, 0, X, Z, L / 2 - 0.1, 0.05, w + 0.05, new THREE.Color(0xf0f0ee));
-        det.wheel(L / 2 - 0.4, 0.26, 0, 0.26, 0.15, TYRE); wheels([-L * 0.3], 0.26, w - 0.1);
-        head.box(L / 2 + 0.01, 0.95, 0, X, Z, 0.02, 0.08, 0.1, WHITE);
-        pair(tail, -L / 2 + 0.19, 0.6, w - 0.15, 0.02, 0.06, 0.08);
+        body.box(0.12, 0.78, 0, X, Z, 0.32, 0.12, 0.16, WHITE);            // tank
+        body.box(-0.4, 0.66, 0, X, Z, 0.32, 0.1, 0.13, WHITE);             // side panels
+        body.box(0.62, 0.95, 0, X, Z, 0.1, 0.12, 0.14, WHITE);             // headlamp cowl
+        det.box(-0.35, 0.86, 0, X, Z, 0.36, 0.05, 0.15, JACKET);           // seat
+        det.box(0.55, 0.7, 0, X, Z, 0.04, 0.32, 0.05, METAL);              // forks
+        det.box(0.58, 1.1, 0, X, Z, 0.03, 0.03, 0.36, CHROME);             // handlebar
+        det.box(0.0, 0.45, 0.09, X, Z, 0.3, 0.12, 0.05, METAL);            // engine
+        det.box(-0.45, 0.42, 0.14, X, Z, 0.32, 0.04, 0.04, CHROME);        // exhaust
+        det.box(-0.18, 1.22, 0, X, Z, 0.16, 0.32, 0.2, JACKET);            // rider
+        det.box(0.18, 1.1, 0, X, Z, 0.26, 0.05, 0.22, JACKET);             // arms
+        det.box(-0.12, 0.8, 0, X, Z, 0.26, 0.09, 0.2, new THREE.Color(0x30343d));    // legs
+        body.box(-0.16, 1.68, 0, X, Z, 0.15, 0.14, 0.13, WHITE);           // helmet
+        det.box(-0.84, 0.62, 0, X, Z, 0.01, 0.05, 0.09, RED_PLATE);
+        head.box(0.73, 0.96, 0, X, Z, 0.02, 0.06, 0.07, WHITE);
+        tail.box(-0.8, 0.78, 0, X, Z, 0.02, 0.035, 0.08, WHITE);
+      } else if (t.name === 'car') {                            // Suzuki Swift-size hatchback
+        const P = [[-1.92, 0.3], [-1.95, 0.62], [-1.88, 0.98], [-1.55, 1.42], [0.12, 1.48], [0.95, 0.98], [1.85, 0.82], [1.95, 0.55], [1.92, 0.3]];
+        extrude(body, P, w, WHITE);
+        sideGlass(det, [[-1.62, 1.02], [-1.47, 1.35], [0.08, 1.4], [0.8, 1.02]], w);
+        band(det, P, P[4], P[5], w - 0.1, GLASS); band(det, P, P[2], P[3], w - 0.12, GLASS);
+        det.box(1.93, 0.42, 0, X, Z, 0.05, 0.13, w - 0.04, BLACK); det.box(-1.93, 0.42, 0, X, Z, 0.05, 0.13, w - 0.04, BLACK);
+        wheels([1.22, -1.22], 0.29, w - 0.13, 0.19); mirrors(0.75, 1.05);
+        plates(det, 1.99, -1.99, 0.52, 0.24, RED_PLATE);
+        pair(head, 1.9, 0.74, w - 0.3, 0.03, 0.06, 0.17); pair(tail, -1.92, 0.88, w - 0.18, 0.03, 0.09, 0.1);
+      } else if (t.name === 'suv') {                            // Scorpio / Creta-size SUV
+        const P = [[-2.2, 0.42], [-2.24, 0.8], [-2.2, 1.74], [0.42, 1.8], [1.15, 1.16], [2.15, 1.05], [2.25, 0.72], [2.2, 0.42]];
+        extrude(body, P, w, WHITE);
+        sideGlass(det, [[-2.06, 1.2], [-2.06, 1.68], [0.38, 1.72], [1.0, 1.2]], w);
+        band(det, P, P[3], P[4], w - 0.1, GLASS); band(det, P, P[1], P[2], w - 0.15, GLASS);
+        det.box(2.23, 0.52, 0, X, Z, 0.05, 0.15, w - 0.03, BLACK); det.box(-2.23, 0.52, 0, X, Z, 0.05, 0.15, w - 0.03, BLACK);
+        for (const z of [-(w - 0.15), w - 0.15]) det.box(-0.9, 1.84, z, X, Z, 1.15, 0.03, 0.03, BLACK);     // roof rails
+        wheels([1.38, -1.35], 0.36, w - 0.15, 0.23); mirrors(1.0, 1.25);
+        plates(det, 2.29, -2.29, 0.62, 0.25, RED_PLATE);
+        pair(head, 2.18, 0.92, w - 0.32, 0.03, 0.07, 0.18); pair(tail, -2.22, 1.0, w - 0.14, 0.03, 0.14, 0.08);
+      } else if (t.name === 'micro') {                          // Toyota Hiace microbus (public: black plate)
+        const P = [[-2.65, 0.36], [-2.65, 2.2], [1.6, 2.25], [2.45, 1.3], [2.65, 1.02], [2.65, 0.36]];
+        extrude(body, P, w, WHITE);
+        sideGlass(det, [[-2.5, 1.38], [-2.5, 2.02], [1.55, 2.06], [2.22, 1.38]], w);
+        band(det, P, P[2], P[3], w - 0.1, GLASS); band(det, P, [-2.65, 1.4], [-2.65, 2.05], w - 0.15, GLASS);
+        det.box(0, 1.15, w + 0.004, X, Z, 2.6, 0.06, 0.004, new THREE.Color(0xb3202a)); det.box(0, 1.15, -w - 0.004, X, Z, 2.6, 0.06, 0.004, new THREE.Color(0xb3202a));
+        det.box(2.66, 0.48, 0, X, Z, 0.05, 0.13, w - 0.03, BLACK); det.box(-2.66, 0.48, 0, X, Z, 0.05, 0.13, w - 0.03, BLACK);
+        wheels([1.55, -1.45], 0.34, w - 0.14, 0.21); mirrors(2.2, 1.55);
+        plates(det, 2.72, -2.72, 0.62, 0.25, BLACK_PLATE);
+        pair(head, 2.64, 0.86, w - 0.3, 0.03, 0.08, 0.17); pair(tail, -2.66, 0.95, w - 0.1, 0.03, 0.18, 0.07);
+      } else if (t.name === 'bus') {                            // a city bus with a roof carrier (public: black plate)
+        const P = [[-5.25, 0.5], [-5.25, 3.05], [5.05, 3.05], [5.25, 2.8], [5.25, 0.5]];
+        extrude(body, P, w, WHITE);
+        sideGlass(det, [[-4.95, 1.75], [-4.95, 2.72], [4.6, 2.72], [4.6, 1.75]], w);
+        det.box(5.26, 2.12, 0, X, Z, 0.012, 0.62, w - 0.12, GLASS);                    // windscreen
+        det.box(5.26, 2.86, 0, X, Z, 0.014, 0.12, w - 0.3, BLACK);                     // destination board
+        det.box(-5.26, 2.3, 0, X, Z, 0.012, 0.42, w - 0.25, GLASS);
+        det.box(3.6, 1.6, -w - 0.006, X, Z, 0.45, 1.0, 0.006, new THREE.Color(0x2b2f33));   // door on the left (kerb) side
+        det.box(0, 1.45, w + 0.004, X, Z, 5.2, 0.1, 0.004, new THREE.Color(0xf2f2ee)); det.box(0, 1.45, -w - 0.004, X, Z, 5.2, 0.1, 0.004, new THREE.Color(0xf2f2ee));
+        for (const z of [-(w - 0.2), w - 0.2]) det.box(-0.6, 3.25, z, X, Z, 3.6, 0.05, 0.05, METAL);       // roof carrier
+        for (let x = -4.0; x <= 2.9; x += 0.98) det.box(x, 3.18, 0, X, Z, 0.04, 0.12, w - 0.2, METAL);
+        det.box(5.27, 0.62, 0, X, Z, 0.05, 0.13, w - 0.02, BLACK); det.box(-5.27, 0.62, 0, X, Z, 0.05, 0.13, w - 0.02, BLACK);
+        wheels([3.2, -2.6], 0.5, w - 0.22, 0.3); mirrors(5.15, 2.4);
+        plates(det, 5.32, -5.32, 0.85, 0.27, BLACK_PLATE);
+        pair(head, 5.26, 0.98, w - 0.35, 0.02, 0.1, 0.2); pair(tail, -5.27, 1.05, w - 0.18, 0.02, 0.22, 0.09);
+      } else if (t.name === 'truck') {                          // Tata LPT-style truck: cab, painted wooden body (black plate)
+        const P = [[2.2, 0.62], [2.2, 2.85], [3.62, 2.85], [3.95, 2.18], [4.0, 0.62]];
+        extrude(body, P, w, WHITE);
+        sideGlass(det, [[2.5, 1.85], [2.5, 2.6], [3.52, 2.6], [3.78, 1.85]], w);
+        band(det, P, P[2], P[3], w - 0.15, GLASS);
+        det.box(4.02, 1.2, 0, X, Z, 0.03, 0.3, w - 0.25, new THREE.Color(0x2a2c2e));        // grille
+        det.box(-0.95, 2.05, 0, X, Z, 3.05, 1.05, w + 0.02, WOOD);                           // high wooden body
+        det.box(-0.95, 2.55, w + 0.03, X, Z, 3.05, 0.22, 0.01, new THREE.Color(0xe5b30e));   // painted bands
+        det.box(-0.95, 2.55, -w - 0.03, X, Z, 3.05, 0.22, 0.01, new THREE.Color(0xe5b30e));
+        det.box(-0.95, 2.2, w + 0.03, X, Z, 3.05, 0.08, 0.01, new THREE.Color(0xc0262d));
+        det.box(-0.95, 2.2, -w - 0.03, X, Z, 3.05, 0.08, 0.01, new THREE.Color(0xc0262d));
+        det.box(2.05, 3.2, 0, X, Z, 0.08, 0.3, w, new THREE.Color(0xc0262d));                // the decorated board over the cab
+        det.box(-0.95, 0.78, 0, X, Z, 3.2, 0.1, w - 0.35, BLACK);                            // chassis
+        det.box(4.05, 0.7, 0, X, Z, 0.06, 0.15, w, BLACK);
+        wheels([3.15, -1.9, -2.95], 0.5, w - 0.24, 0.3); mirrors(3.85, 2.3);
+        plates(det, 4.12, -4.02, 0.8, 0.27, BLACK_PLATE);
+        pair(head, 4.02, 1.0, w - 0.35, 0.02, 0.1, 0.18); pair(tail, -3.95, 0.82, w - 0.2, 0.02, 0.08, 0.12);
+      } else {                                                  // Safa tempo, the electric three-wheeler
+        const P = [[-1.65, 0.36], [-1.65, 1.8], [1.18, 1.8], [1.55, 1.2], [1.65, 0.36]];
+        extrude(body, P, w, WHITE);
+        sideGlass(det, [[-1.5, 1.18], [-1.5, 1.62], [1.1, 1.62], [1.36, 1.18]], w);
+        band(det, P, P[2], P[3], w - 0.08, GLASS);
+        det.box(-0.3, 1.86, 0, X, Z, 1.4, 0.05, w + 0.04, new THREE.Color(0xf0f0ee));        // roof
+        det.wheel(1.25, 0.26, 0, 0.26, 0.14, TYRE); wheels([-1.0], 0.26, w - 0.08, 0.14);
+        plates(det, 1.7, -1.7, 0.55, 0.2, BLACK_PLATE);
+        head.box(1.64, 1.0, 0, X, Z, 0.02, 0.08, 0.1, WHITE);
+        pair(tail, -1.66, 0.62, w - 0.14, 0.02, 0.06, 0.08);
       }
       const inst = (g, mat, shadow) => {
         const m = new THREE.InstancedMesh(g.geometry(), mat, t.n);
