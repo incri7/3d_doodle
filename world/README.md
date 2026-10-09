@@ -24,6 +24,7 @@ Downloads are cached in `data/ktm/` (not committed, ~0.7 GB).
 | 64k extra building footprints (where OSM has none) | Google Open Buildings v3 | CC BY 4.0 / ODbL |
 | Terrain | Copernicus GLO-30 DEM, © DLR e.V. 2010-2014 and © Airbus 2014-2018, provided under COPERNICUS by the European Union and ESA | Copernicus DEM licence (free) |
 | Street photos (120 along the loop, contact sheet and map in output/ktm_ringroad/) | Mapillary, photos by @roadroid, @thapa7, @geohacker, @mahesh_thapa, @olily, @gauravparajuli09, @nitishmishra, @ArunBhomi, @mapconcierge, @Ghyasang_Ghising, @fundacja_geolife | CC BY-SA 4.0 |
+| Direction-sign positions (traffic-sign detections) | Mapillary map features (`world/fetch_signs.py`) | CC BY-SA 4.0 |
 | Place names on the road boards | © OpenStreetMap contributors, looked up with Nominatim (`world/fetch_places.py`) | ODbL 1.0 |
 | Ground colour | Contains modified Copernicus Sentinel data (2026), Sentinel-2 L2A | Copernicus open licence |
 
@@ -66,9 +67,14 @@ side roads join through gaps in the footpath; river bridges have parapets.
 The bus starts at Kalanki. The road is streamed in 200 m chunks (meshes and
 colliders) around the bus.
 
-- Place boards: a blue board names each of 21 places (Nepali and English)
-  on both carriageways; a green board 260 m on lists the next two places
-  ahead and their distance.
+- Direction signs as on the real Ring Road (Department of Roads green, white
+  border, Nepali above English and 25 % larger): pole-mounted advance signs
+  with a junction diagram (the next chowks ahead with distances, the crossing
+  roads' OSM names on the side arms, the chowk's name on a blue band), and the
+  overhead gantry at Koteshwor with a panel over each lane. They stand where
+  Mapillary detected the real signs; a chowk with none detected in the 400 m
+  before it gets one 150 m before it. 22 chowks, each placed at its OSM chowk
+  node, the crossing of the road named after it, or the nearest main crossing.
 - Traffic: 124 motorbikes, cars, SUVs, microbuses, buses, trucks and Safa
   tempos drive on the left around the bus, follow the vehicle ahead (the
   bus included), change lanes, merge where 8 lanes become 4 and light up

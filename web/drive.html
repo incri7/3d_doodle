@@ -2002,8 +2002,15 @@ function poolStream(x, z) {
       return !!list && list.some(([px, py, hw]) => (px - x) ** 2 + (py - y) ** 2 < hw * hw);
     };
 
-    // --- place boards: each place named on both carriageways, plus the next places ahead ---
+    // --- direction signs, as Nepal's Department of Roads puts them up on the Ring Road ------------
+    // (green, white border and text, Nepali above English and 25 % larger: DoR Traffic Signs
+    // Manual 1997; layout as in the Mapillary photos along the road): a pole-mounted advance
+    // sign with a junction diagram, and the overhead gantry at Koteshwor with a panel over each
+    // lane. They stand where Mapillary detected the real ones (world/fetch_signs.py); a chowk
+    // with none detected in the 400 m before it gets one 150 m before it.
     const places = D.places.map(p => ({ ...p, s: S[p.k] }));
+    const wrapS = v => ((v % LOOP) + LOOP) % LOOP;
+    const fwd = (from, to, dir) => wrapS(dir > 0 ? to - from : from - to);       // distance ahead along dir
     function boardMat(draw, w, h) {
       const c = document.createElement('canvas'); c.width = w; c.height = h;
       const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = MAX_ANISO;
@@ -2013,45 +2020,85 @@ function poolStream(x, z) {
       if (!fontsReady) { redraw.add(f); m.userData.redraw = f; }
       return m;
     }
-    const frameBoard = (g, w, h, bg) => {
-      g.fillStyle = bg; g.fillRect(0, 0, w, h);
-      g.strokeStyle = '#ffffff'; g.lineWidth = 8; g.strokeRect(12, 12, w - 24, h - 24);
-      g.fillStyle = '#ffffff'; g.textAlign = 'center'; g.textBaseline = 'middle';
+    const NE_FONT = '"Noto Sans Devanagari", Mukta, sans-serif', EN_FONT = 'Mukta, Arial, sans-serif';
+    const GREEN = '#0a6a3c', BLUE = '#14509e';
+    // write text no wider than maxW, shrinking the font if needed
+    const fitText = (g, text, x, y, maxW, size, font, weight = 700) => {
+      let px = size;
+      do { g.font = `${weight} ${px}px ${font}`; px -= 2; } while (px > 12 && g.measureText(text).width > maxW);
+      g.fillText(text, x, y);
     };
-    const nameMats = places.map(p => boardMat((g, w, h) => {
-      frameBoard(g, w, h, '#0b4fa3');
-      g.font = '800 104px Mukta, "Noto Sans Devanagari", sans-serif'; g.fillText(p.ne, w / 2, h * 0.37);
-      g.font = '700 64px Oswald, Mukta, sans-serif'; g.fillText(p.en.toUpperCase(), w / 2, h * 0.76);
-    }, 768, 320));
+    const panel = (g, w, h, bg) => {
+      g.fillStyle = bg; g.fillRect(0, 0, w, h);
+      g.strokeStyle = '#ffffff'; g.lineWidth = 7; g.strokeRect(14, 14, w - 28, h - 28);
+      g.fillStyle = '#ffffff'; g.strokeStyle = '#ffffff'; g.textBaseline = 'middle';
+    };
+    const name2 = (g, nm, x, y, maxW, sz, align) => {      // Nepali above English, Nepali 25 % larger
+      g.textAlign = align;
+      if (nm.ne) fitText(g, nm.ne, x, y - sz * 0.55, maxW, sz * 1.25, NE_FONT, 700);
+      if (nm.en) fitText(g, nm.en, x, y + (nm.ne ? sz * 0.6 : 0), maxW, sz, EN_FONT, 600);
+    };
+    const arrowHead = (g, x, y, ang, sz) => {
+      g.save(); g.translate(x, y); g.rotate(ang);
+      g.beginPath(); g.moveTo(0, -sz); g.lineTo(sz * 0.8, sz * 0.25); g.lineTo(-sz * 0.8, sz * 0.25); g.closePath(); g.fill();
+      g.restore();
+    };
     const km = d => d < 1000 ? (Math.round(d / 100) * 100) + ' m' : (d / 1000).toFixed(1) + ' km';
-    // direction board for travel direction dir (+1 = increasing s): the next two places
-    const aheadOf = (s, dir) => places.map(p => ({ p, d: ((dir > 0 ? p.s - s : s - p.s) % LOOP + LOOP) % LOOP }))
-      .filter(q => q.d > 40).sort((a, b) => a.d - b.d).slice(0, 2);
-    function dirMat(s, dir) {
-      const list = aheadOf(s, dir);
-      return boardMat((g, w, h) => {
-        frameBoard(g, w, h, '#0e6b3a');
-        list.forEach((q, i) => {
-          const y = h * (0.27 + i * 0.47);
-          g.textAlign = 'left';
-          g.font = '800 72px Mukta, "Noto Sans Devanagari", sans-serif'; g.fillText(q.p.ne, 56, y - 12);
-          g.font = '600 42px Oswald, Mukta, sans-serif'; g.fillText(q.p.en, 58, y + 54);
-          g.textAlign = 'right';
-          g.font = '700 66px Oswald, Mukta, sans-serif'; g.fillText(km(q.d), w - 56, y + 18);
-          if (i === 0) g.fillRect(36, h * 0.5 + 2, w - 72, 5);
-        });
-      }, 768, 384);
+    const aheadOf = (s, dir) => places.map(p => ({ p, d: fwd(s, p.s, dir) })).filter(q => q.d > 40).sort((a, b) => a.d - b.d).slice(0, 2);
+    const MAJ = new Set(['trunk', 'primary', 'secondary', 'tertiary']);
+    // the next main-road crossing 20-300 m ahead, and the road names on its left / right arms
+    function junctionAhead(s, dir) {
+      let best = null;
+      for (const st of D.stubs) {
+        if (!MAJ.has(st.cls)) continue;
+        const d = fwd(s, S[st.k], dir);
+        if (d > 20 && d < 300 && (!best || d < best.d)) best = { d, k: st.k };
+      }
+      if (!best) return null;
+      const arms = {};
+      for (const st of D.stubs) {
+        if (Math.abs(wrapS(S[st.k] - S[best.k] + LOOP / 2) - LOOP / 2) > 30) continue;
+        const key = st.side === dir ? 'left' : 'right';                         // traffic going +s keeps to +N (left)
+        if (!arms[key] || (!arms[key].ne && !arms[key].en && st.name)) arms[key] = st.name || { ne: '', en: '' };
+      }
+      return { d: best.d, arms };
     }
-    const boards = [];           // { s, sg, w, h, mat }  sg: road side; traffic going +s keeps to +N (left)
-    places.forEach((p, i) => {
-      boards.push({ s: p.s - 70, sg: 1, w: 4.8, h: 2.0, mat: nameMats[i] });
-      boards.push({ s: p.s + 70, sg: -1, w: 4.8, h: 2.0, mat: nameMats[i] });
-      boards.push({ s: p.s + 260, sg: 1, w: 5.0, h: 2.5 });
-      boards.push({ s: p.s - 260, sg: -1, w: 5.0, h: 2.5 });
-    });
-    for (const b of boards) {
-      b.s = ((b.s % LOOP) + LOOP) % LOOP;
-      for (let i = 0; i < 30 && (isGap(b.sg, kAt(b.s)) || isGap(b.sg, kAt(b.s) + 1)); i++) b.s = ((b.s - b.sg * r.step) % LOOP + LOOP) % LOOP;
+    function poleMat(s, dir) {
+      const ahead = aheadOf(s, dir), J = junctionAhead(s, dir);
+      const here = ahead[0] && ahead[0].d < 400 ? ahead[0].p : null;           // the chowk just ahead, on a blue band
+      return boardMat((g, w, h) => {
+        panel(g, w, h, GREEN);
+        const band = here ? 92 : 0, H = h - band;
+        if (J) {
+          // junction diagram: the road ahead (arrow up) crossed by the side road(s)
+          const cx = w / 2, yTop = H * 0.43, yBar = H * 0.72;
+          g.fillRect(cx - 13, yTop, 26, H - 30 - yTop);
+          arrowHead(g, cx, yTop, 0, 34);
+          const L = J.arms.left, R = J.arms.right;
+          if (L) { g.fillRect(70, yBar - 13, cx - 70, 26); arrowHead(g, 70, yBar, -Math.PI / 2, 34); name2(g, L, 60, yBar - 70, cx - 90, 30, 'left'); }
+          if (R) { g.fillRect(cx, yBar - 13, w - 70 - cx, 26); arrowHead(g, w - 70, yBar, Math.PI / 2, 34); name2(g, R, w - 60, yBar - 70, cx - 90, 30, 'right'); }
+          if (ahead[0]) { name2(g, ahead[0].p, cx, H * 0.17, w - 260, 40, 'center'); g.textAlign = 'right'; g.font = `700 36px ${EN_FONT}`; g.fillText(km(ahead[0].d), w - 40, H * 0.17 + 24); }
+        } else {
+          ahead.forEach((q, i) => {
+            const y = H * (0.28 + i * 0.45);
+            arrowHead(g, 72, y - 6, 0, 30); g.fillRect(62, y - 6, 20, 52);
+            name2(g, q.p, 120, y, w - 330, 40, 'left');
+            g.textAlign = 'right'; g.font = `700 44px ${EN_FONT}`; g.fillText(km(q.d), w - 46, y + 4);
+          });
+        }
+        if (here) {
+          g.fillStyle = BLUE; g.fillRect(14, h - band - 4, w - 28, band - 10);
+          g.fillStyle = '#ffffff'; g.textAlign = 'center';
+          fitText(g, `${here.ne}   ${here.en}`, w / 2, h - band / 2 - 8, w - 70, 50, `${NE_FONT}`, 700);
+        }
+      }, 768, 640);
+    }
+    const signsAll = D.signs.map(q => ({ s: S[q.k], dir: q.dir, kind: q.kind }));
+    for (const p of places) for (const dir of [1, -1]) {
+      if (!signsAll.some(q => q.dir === dir && fwd(q.s, p.s, dir) < 400)) signsAll.push({ s: wrapS(p.s - dir * 150), dir, kind: 'pole' });
+    }
+    for (const q of signsAll) {                     // posts stand on the footpath, clear of side-road mouths
+      for (let i = 0; i < 30 && (isGap(q.dir, kAt(q.s)) || isGap(q.dir, kAt(q.s) + 1)); i++) q.s = wrapS(q.s - q.dir * r.step);
     }
     KTM.places = places;
 
@@ -2388,30 +2435,68 @@ function poolStream(x, z) {
         }
       }
 
-      // place boards standing on the footpath, facing the traffic on that side
+      // direction signs facing the traffic they serve
       {
         const postG = new Geo();
-        for (const b of boards) {
-          if (b.s < sStart || b.s >= sEnd) continue;
-          const F = frame(b.s), o = b.sg * (EDGE(F.k, b.sg) + FOOT * 0.55);
-          const x = F.x - F.ty * o, y = F.y + F.tx * o;
-          const fx = -F.tx * b.sg, fy = -F.ty * b.sg;           // toward the traffic coming on that side
-          const ax = [-fy, fx];                                 // board's left-to-right as seen by that traffic
-          const bottom = 2.3, top = bottom + b.h;
-          for (const e of [-1, 1]) {
-            const px = x + ax[0] * e * (b.w / 2 - 0.25), py = y + ax[1] * e * (b.w / 2 - 0.25);
-            postG.box(px, top / 2, -py, [ax[0], -ax[1]], [fx, -fy], 0.06, top / 2, 0.06, grey);
-            poolCyl(0.08, top, [px, top / 2, -py]);
-          }
-          postG.box(x - fx * 0.05, (bottom + top) / 2, -(y - fy * 0.05), [ax[0], -ax[1]], [fx, -fy], b.w / 2 + 0.04, b.h / 2 + 0.04, 0.03, dark);
-          let mat = b.mat;
-          if (!mat) { mat = dirMat(b.s, b.sg); mats.push(mat); }
+        const steel = new THREE.Color(0x8a8c8e);
+        const quadFacing = (cx, cy, fx, fy, ax, w, h, bottom, mat) => {      // a board centred at (cx, cy) on the map
           const g = new Geo();
-          const p0 = P2(x - ax[0] * b.w / 2 + fx * 0.01, y - ax[1] * b.w / 2 + fy * 0.01, bottom);
-          const p1 = P2(x + ax[0] * b.w / 2 + fx * 0.01, y + ax[1] * b.w / 2 + fy * 0.01, bottom);
-          const up = new THREE.Vector3(0, b.h, 0);
+          const p0 = P2(cx - ax[0] * w / 2 + fx * 0.02, cy - ax[1] * w / 2 + fy * 0.02, bottom);
+          const p1 = P2(cx + ax[0] * w / 2 + fx * 0.02, cy + ax[1] * w / 2 + fy * 0.02, bottom);
+          const up = new THREE.Vector3(0, h, 0);
           g.quad(p0, p1, p1.clone().add(up), p0.clone().add(up), [0, 0], [1, 0], [1, 1], [0, 1]);
           g.mesh(mat, group, false);
+          postG.box(cx - fx * 0.03, bottom + h / 2, -(cy - fy * 0.03), [ax[0], -ax[1]], [fx, -fy], w / 2 + 0.03, h / 2 + 0.03, 0.03, dark);
+        };
+        for (const q of signsAll) {
+          if (q.s < sStart || q.s >= sEnd) continue;
+          const F = frame(q.s), dir = q.dir, nx = -F.ty * dir, ny = F.tx * dir;    // nx, ny: out to that side's kerb
+          const fx = -F.tx * dir, fy = -F.ty * dir, ax = [-fy, fx];               // faces the oncoming traffic; ax runs left to right for it
+          const edge = EDGE(F.k, dir), at2 = o => [F.x + nx * o, F.y + ny * o];
+          if (q.kind === 'gantry') {
+            // a steel truss over that direction's carriageways, a panel over each lane
+            const oIn = Math.max(M0(F.k), 0.3) - 0.2, oOut = edge + FOOT * 0.6, top = 8.6, bot = 7.8;
+            for (const o of [oIn, oOut]) {
+              const [px, py] = at2(o);
+              postG.box(px, top / 2, -py, [F.tx, -F.ty], [nx, -ny], 0.18, top / 2, 0.18, steel);
+              poolBox([0.2, top / 2, 0.2], [px, top / 2, -py]);
+            }
+            const [mx, my] = at2((oIn + oOut) / 2), half = (oOut - oIn) / 2, along = [nx, -ny];
+            for (const y of [top, bot]) postG.box(mx, y, -my, along, [F.tx, -F.ty], half, 0.07, 0.07, steel);
+            for (let o = oIn; o < oOut; o += 0.8) { const [px, py] = at2(o + 0.4); postG.box(px, (top + bot) / 2, -py, along, [F.tx, -F.ty], 0.03, (top - bot) / 2, 0.03, steel); }
+            const lanes = [0, ...(F.ln > 1.99 ? [1] : []), ...(fw(F, dir) > 0.999 ? [2, 3] : [])];
+            const ahead = aheadOf(q.s, dir), J = junctionAhead(q.s, dir), kerb = Math.max(...lanes);
+            for (const l of lanes) {
+              const turn = l === kerb && J && J.arms.left;          // the kerb lane turns left (traffic keeps left)
+              const nm = turn ? J.arms.left : ahead[0] && ahead[0].p;
+              const mat = boardMat((g, w, h) => {
+                panel(g, w, h, GREEN);
+                if (nm) name2(g, nm, w / 2, 120, w - 60, 40, 'center');
+                g.fillStyle = '#ffffff';
+                if (turn) { g.fillRect(w / 2 - 12, 250, 24, 240); g.fillRect(w / 2 - 110, 238, 122, 24); arrowHead(g, w / 2 - 120, 250, -Math.PI / 2, 34); }
+                else { g.fillRect(w / 2 - 12, 250, 24, 240); arrowHead(g, w / 2, 236, 0, 36); }
+              }, 384, 512);
+              mats.push(mat);
+              const [px, py] = at2(laneOff(l, F, dir));
+              quadFacing(px, py, fx, fy, ax, 1.6, 2.1, 5.7, mat);
+            }
+            const here = ahead[0] && ahead[0].d < 400 ? ahead[0].p : null;
+            if (here) {
+              const mat = boardMat((g, w, h) => { panel(g, w, h, BLUE); g.textAlign = 'center'; fitText(g, `${here.ne}   ${here.en}`, w / 2, h / 2, w - 60, 64, NE_FONT, 700); }, 768, 160);
+              mats.push(mat);
+              const [px, py] = at2(oIn + 1.0);
+              quadFacing(px, py, fx, fy, ax, 3.4, 0.7, 7.85, mat);
+            }
+            continue;
+          }
+          // pole-mounted advance sign: one post at the back of the footpath, the board toward the road
+          const [px, py] = at2(edge + FOOT - 0.3), w = 3.2, h = 2.67, bottom = 3.9;
+          postG.box(px, (bottom + h) / 2, -py, [F.tx, -F.ty], [nx, -ny], 0.08, (bottom + h) / 2, 0.08, steel);
+          poolCyl(0.1, bottom + h, [px, (bottom + h) / 2, -py]);
+          const [bx, by] = at2(edge + FOOT - 0.3 - w / 2 + 0.15);
+          const mat = poleMat(q.s, dir);
+          mats.push(mat);
+          quadFacing(bx, by, fx, fy, ax, w, h, bottom, mat);
         }
         postG.mesh(colMat, group, false);
       }

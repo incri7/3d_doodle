@@ -186,6 +186,29 @@ def places(meta, loop, o, ring_ids):
     return out
 
 
+def signs(loop, edge):
+    """The real direction signs (world/fetch_signs.py, Mapillary detections): detections of one
+    sign merge (same direction, within 40 m); a run of 5+ panels across the road is an
+    overhead gantry. Ones out on side roads (beyond the footpath) are left out."""
+    path = os.path.join(DATA, "signs.json")
+    if not os.path.exists(path):
+        return []
+    det = [d for d in json.load(open(path)) if abs(d["off"]) <= edge[min(d["k2"] // 2, loop.n - 1)] + S.FOOT + 3]
+    out = []
+    for d in sorted(det, key=lambda d: d["s"]):
+        last = next((o for o in reversed(out) if o["dir"] == d["dir"] and d["s"] - o["s1"] < 40), None)
+        if last:
+            last["s1"] = d["s"]; last["n"] += 1; last["offs"].append(d["off"])
+        else:
+            out.append({"s0": d["s"], "s1": d["s"], "dir": d["dir"], "n": 1, "offs": [d["off"]]})
+    res = []
+    for o in out:
+        gantry = o["n"] >= 5 and max(o["offs"]) - min(o["offs"]) > 8 and o["s1"] - o["s0"] < 25
+        res.append({"k": int(round((o["s0"] + o["s1"]) / 2 / STEP)) % loop.n, "dir": o["dir"], "kind": "gantry" if gantry else "pole"})
+    print("signs", len(res), "gantries", sum(r["kind"] == "gantry" for r in res))
+    return res
+
+
 def q20(a):
     return [int(v) for v in np.clip(np.round(np.asarray(a) * 20), 0, 20)]
 
@@ -354,6 +377,7 @@ def main():
 
     # --- side road stubs (where the city's roads meet the Ring Road) ------------------------------
     ring_ids = {e["id"] for e, _ in lines}
+    rtags = {e["id"]: e.get("tags", {}) for e in json.load(open(os.path.join(DATA, "roads.json")))["elements"]}
     stubs = []
     for rd in meta["roads"]:
         if rd["id"] in ring_ids or rd["cls"] not in SIDE_CLS or rd["ring"]:
@@ -387,8 +411,11 @@ def main():
                     side = 1 if off[i1] > 0 else -1
                     if abs(off[i1]) > edge[kd[i1]] + S.FOOT + 6:
                         continue
-                    stubs.append({"k": int(kd[i1]), "side": side, "w": w,
-                                  "p": np.round(run, 1).ravel().tolist()})
+                    t = rtags.get(rd["id"], {})
+                    nm = {"ne": t.get("name:ne") or (t.get("name") if any("\u0900" <= ch <= "\u097f" for ch in t.get("name", "")) else ""),
+                          "en": t.get("name:en") or (t.get("name") if t.get("name", "").isascii() else "")}
+                    stubs.append({"k": int(kd[i1]), "side": side, "w": w, "cls": rd["cls"],
+                                  "p": np.round(run, 1).ravel().tolist(), **({"name": nm} if nm["ne"] or nm["en"] else {})})
     print("side roads", len(stubs))
     stub_geo = shapely.union_all([LineString(np.asarray(s["p"]).reshape(-1, 2)).buffer(s["w"] / 2 + 1.2) for s in stubs])
 
@@ -464,7 +491,7 @@ def main():
                  "flyovers": [[round(a, 1), round(b, 1)] for a, b in flyovers],
                  "median": S.MEDIAN, "lane": S.LANE, "shoulder": S.SHOULDER, "sep": S.SEP, "foot": S.FOOT,
                  "start": int(kk["Kalanki"])},
-        "stubs": stubs, "places": pl,
+        "stubs": stubs, "places": pl, "signs": signs(loop, edge),
         "near": near, "far": far,
         "terrain": {"x0": round(x0, 1), "y0": round(y0, 1), "step": TSTEP, "nx": len(xs), "ny": len(ys),
                     "h": base64.b64encode(hq.tobytes()).decode()},
