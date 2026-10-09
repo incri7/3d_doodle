@@ -1,7 +1,8 @@
-"""Traffic signals on the Ring Road from OpenStreetMap (highway=traffic_signals
-nodes), read with the main OSM API in small boxes along the loop (the Overpass
-mirrors were down), plus Mapillary's traffic-light detections as a check.
-Writes data/ktm/signals.json: [{lat, lon, src, id}]. OSM data ODbL."""
+"""Traffic signals and bus stops on the Ring Road from OpenStreetMap
+(highway=traffic_signals / crossing=traffic_signals, highway=bus_stop /
+public_transport=platform nodes), read with the main OSM API in small boxes
+along the loop (the Overpass mirrors were down).
+Writes data/ktm/signals.json and data/ktm/bus_stops.json. OSM data ODbL."""
 import json, os, time, urllib.request
 import xml.etree.ElementTree as ET
 
@@ -19,7 +20,7 @@ def main():
     lat = c[:, 1] / meta["ky"] + meta["lat0"]
     cache = os.path.join(DATA, "osmapi")
     os.makedirs(cache, exist_ok=True)
-    found = {}
+    found, stops = {}, {}
     for k in range(0, len(c), 150):                       # every 300 m, 600 m boxes
         p = os.path.join(cache, f"{k:05d}.xml")
         if not os.path.exists(p):
@@ -40,9 +41,13 @@ def main():
             if tags.get("highway") == "traffic_signals" or tags.get("crossing") == "traffic_signals":
                 found[n.get("id")] = {"id": n.get("id"), "lat": float(n.get("lat")), "lon": float(n.get("lon")),
                                       "src": "osm", "crossing": tags.get("highway") != "traffic_signals"}
-        print(k, len(found), flush=True)
+            if tags.get("highway") == "bus_stop" or tags.get("public_transport") == "platform":
+                stops[n.get("id")] = {"id": n.get("id"), "lat": float(n.get("lat")), "lon": float(n.get("lon")),
+                                      "name": tags.get("name:en") or tags.get("name", "")}
+        print(k, len(found), len(stops), flush=True)
     json.dump(list(found.values()), open(os.path.join(DATA, "signals.json"), "w"), indent=1)
-    print(len(found), "signal nodes")
+    json.dump(list(stops.values()), open(os.path.join(DATA, "bus_stops.json"), "w"), indent=1, ensure_ascii=False)
+    print(len(found), "signal nodes,", len(stops), "bus stops")
 
 
 if __name__ == "__main__":

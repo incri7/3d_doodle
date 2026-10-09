@@ -1890,6 +1890,24 @@ function poolStream(x, z) {
       const ny = (b.z - a.z) * (d.x - a.x) - (b.x - a.x) * (d.z - a.z);
       if (ny >= 0) this.quad(a, b, c, d, [0, 0], [1, 0], [1, 1], [0, 1]); else this.quad(a, d, c, b, [0, 0], [0, 1], [1, 1], [1, 0]);
     }
+    // vertical cylinder from y0 to y1, elliptic: radii rx (local x) and rz, tapering by k at the top
+    cyl(x, y0, y1, z, rx, rz, col, k = 1, n = 8) {
+      const ring = (y, f) => Array.from({ length: n }, (_, i) => { const a = i / n * Math.PI * 2; return new THREE.Vector3(x + Math.cos(a) * rx * f, y, z + Math.sin(a) * rz * f); });
+      const A = ring(y0, 1), B = ring(y1, k);
+      for (let i = 0; i < n; i++) { const j = (i + 1) % n; this.quad(A[i], B[i], B[j], A[j], [0, 0], [0, 1], [1, 1], [1, 0], col); }
+      for (const [R, y, up] of [[A, y0, false], [B, y1, true]]) {
+        const c = new THREE.Vector3(x, y, z);
+        for (let i = 0; i < n; i++) {
+          const m = this.p.length / 3, a = R[i], b = R[(i + 1) % n];
+          for (const v of up ? [c, b, a] : [c, a, b]) { this.p.push(v.x, v.y, v.z); this.uv.push(0, 0); this.c.push(col.r, col.g, col.b); }
+          this.i.push(m, m + 1, m + 2);
+        }
+      }
+    }
+    blob(cx, cy, cz, rx, ry, rz, col, nu = 8, nv = 6) {              // a low-poly ellipsoid
+      const P = (i, j) => { const u = i / nu * Math.PI * 2, v = j / nv * Math.PI; return new THREE.Vector3(cx + Math.sin(v) * Math.cos(u) * rx, cy + Math.cos(v) * ry, cz + Math.sin(v) * Math.sin(u) * rz); };
+      for (let j = 0; j < nv; j++) for (let i = 0; i < nu; i++) this.quad(P(i, j), P(i + 1, j), P(i + 1, j + 1), P(i, j + 1), [0, 0], [1, 0], [1, 1], [0, 1], col);
+    }
     get empty() { return this.i.length === 0; }
     geometry() {
       const g = new THREE.BufferGeometry();
@@ -1907,6 +1925,26 @@ function poolStream(x, z) {
       group.add(m);
       return m;
     }
+  }
+
+  // --- people ----------------------------------------------------------------
+  const SKINS = ['#8d5a3b', '#a8704a', '#6f4428', '#b98060', '#7a4b2e'].map(c => new THREE.Color(c));
+  const SHIRTS = ['#f2f2ee', '#7a1424', '#1f4f9a', '#2c2c30', '#c9a227', '#3f6e3a', '#b5651d', '#9fb7d6', '#d24a6a', '#5b3a6e'].map(c => new THREE.Color(c));
+  const HAIR = new THREE.Color(0x121010), TROUSERS = new THREE.Color(0x2b2e36);
+  const pick = a => a[Math.floor(Math.random() * a.length)];
+  // a seated person, hips at (x, seatY, z) in a vehicle's frame, facing face = [x, z]; driving: arms forward
+  function seated(g, x, seatY, z, face = [1, 0], shirt = pick(SHIRTS), skin = pick(SKINS), s = 1) {
+    const ax = face, az = [-face[1], face[0]];
+    const at = (f, l) => [x + ax[0] * f * s + az[0] * l * s, z + ax[1] * f * s + az[1] * l * s];
+    const B = (f, y, l, hx, hy, hz, col) => { const [px, pz] = at(f, l); g.box(px, seatY + y * s, pz, ax, az, hx * s, hy * s, hz * s, col); };
+    B(0.2, 0.07, 0, 0.22, 0.075, 0.17, TROUSERS);           // thighs
+    B(0.42, -0.2, 0, 0.06, 0.22, 0.15, TROUSERS);           // shins
+    B(-0.03, 0.36, 0, 0.12, 0.28, 0.2, shirt);              // torso
+    B(0.13, 0.4, -0.25, 0.17, 0.05, 0.05, shirt); B(0.13, 0.4, 0.25, 0.17, 0.05, 0.05, shirt);   // arms forward
+    const [hx, hz] = at(-0.02, 0);
+    g.blob(hx, seatY + 0.8 * s, hz, 0.1 * s, 0.125 * s, 0.1 * s, skin);
+    const [qx, qz] = at(-0.04, 0);
+    g.blob(qx, seatY + 0.85 * s, qz, 0.105 * s, 0.09 * s, 0.105 * s, HAIR);
   }
 
   function build(D) {
@@ -2118,6 +2156,7 @@ function poolStream(x, z) {
       for (const q of sigSites) {
         const [g, a, rd] = CYCLE[q.kind], t = (sigClock + q.off) % (g + a + rd);
         const st = t < g ? 'g' : t < g + a ? 'a' : 'r';
+        q.left = st === 'g' ? g - t : st === 'a' ? g + a - t : g + a + rd - t;
         if (st === q.state) continue;
         q.state = st;
         for (const k of ['r', 'a', 'g']) q.mats[k].color.setRGB(...(k === st ? LAMP_ON : LAMP_OFF)[k]);
@@ -2638,20 +2677,26 @@ function poolStream(x, z) {
       for (const v of [a, b, c]) { g.p.push(v[0], v[1], v[2]); g.uv.push(0, 0); g.c.push(col.r, col.g, col.b); }
       g.i.push(n, n + 1, n + 2);
     }
-    function plateXY(g, P, z, out, col) {                // a flat polygon in the x-y plane at z, facing +z (out > 0) or -z
-      const sh = P.map(p => new THREE.Vector2(p[0], p[1]));
-      const ccw = !THREE.ShapeUtils.isClockWise(sh);
-      for (const t of THREE.ShapeUtils.triangulateShape(sh, [])) {
+    function plateXY(g, P, z, out, col, holes = []) {    // a flat polygon (with holes) in the x-y plane at z, facing +z (out > 0) or -z
+      const V = p => new THREE.Vector2(p[0], p[1]), all = [...P, ...holes.flat()];
+      for (const t of THREE.ShapeUtils.triangulateShape(P.map(V), holes.map(h => h.map(V)))) {
         let [i, j, k] = t;
-        const cross = (P[j][0] - P[i][0]) * (P[k][1] - P[i][1]) - (P[j][1] - P[i][1]) * (P[k][0] - P[i][0]);
+        const cross = (all[j][0] - all[i][0]) * (all[k][1] - all[i][1]) - (all[j][1] - all[i][1]) * (all[k][0] - all[i][0]);
         if ((cross > 0) !== (out > 0)) [j, k] = [k, j];
-        tri(g, [...P[i], z], [...P[j], z], [...P[k], z], col);
+        tri(g, [...all[i], z], [...all[j], z], [...all[k], z], col);
       }
     }
-    function extrude(g, P, hw, col) {
-      plateXY(g, P, hw, 1, col); plateXY(g, P, -hw, -1, col);
+    // holes: window openings in both sides; open: profile edges left open (glazed by band)
+    function extrude(g, P, hw, col, holes = [], open = []) {
+      plateXY(g, P, hw, 1, col, holes); plateXY(g, P, -hw, -1, col, holes);
+      for (const h of holes) for (let i = 0; i < h.length; i++) {        // the window reveals
+        const a = h[i], b = h[(i + 1) % h.length], v = (q, z) => new THREE.Vector3(q[0], q[1], z);
+        g.quad(v(a, hw), v(b, hw), v(b, hw - 0.06), v(a, hw - 0.06), [0, 0], [1, 0], [1, 1], [0, 1], col);
+        g.quad(v(a, -hw), v(b, -hw), v(b, -hw + 0.06), v(a, -hw + 0.06), [0, 0], [1, 0], [1, 1], [0, 1], col);
+      }
       const C = cen(P);
       for (let i = 0; i < P.length; i++) {
+        if (open.includes(i)) continue;
         const a = P[i], b = P[(i + 1) % P.length], dx = b[0] - a[0], dy = b[1] - a[1];
         let n = [dy, -dx];
         if (n[0] * ((a[0] + b[0]) / 2 - C[0]) + n[1] * ((a[1] + b[1]) / 2 - C[1]) < 0) n = [-dy, dx];
@@ -2673,12 +2718,16 @@ function poolStream(x, z) {
       const fn = new THREE.Vector3().subVectors(q[1], q[0]).cross(new THREE.Vector3().subVectors(q[3], q[0]));
       if (fn.x * n[0] + fn.y * n[1] >= 0) g.quad(...q, [0, 0], [1, 0], [1, 1], [0, 1], col); else g.quad(q[0], q[3], q[2], q[1], [0, 0], [0, 1], [1, 1], [1, 0], col);
     }
+    const glassMat = new THREE.MeshStandardMaterial({ vertexColors: true, transparent: true, opacity: 0.28, roughness: 0.1, metalness: 0.1, depthWrite: false, side: THREE.DoubleSide });
+    const pplMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85, side: THREE.DoubleSide });
     const sideGlass = (g, W, hw) => { plateXY(g, W, hw + 0.006, 1, GLASS); plateXY(g, W, -hw - 0.006, -1, GLASS); };
     // Nepali number plates: red for private vehicles, black for public transport and goods
     const plates = (g, xf, xr, y, hw, col) => { for (const x of [xf, xr]) g.box(x, y, 0, X, Z, 0.012, 0.065, hw, col); };
     // body (tinted per vehicle), details (fixed colours), head lamps, tail lamps; local +x = forward
     function makeType(t) {
       const body = new Geo(), det = new Geo(), head = new Geo(), tail = new Geo();
+      // gl: windows (see-through); ppl: the driver, always there; xtra: passengers some vehicles carry
+      const gl = new Geo(), ppl = new Geo(), xtra = new Geo();
       const L = t.L, w = t.Wd / 2;
       const wheels = (xs, r, wz, tw = 0.22) => { for (const x of xs) for (const z of [-wz, wz]) det.wheel(x, r, z, r, tw, TYRE); };
       const pair = (g, x, y, z, hx, hy, hz) => { g.box(x, y, z, X, Z, hx, hy, hz, WHITE); g.box(x, y, -z, X, Z, hx, hy, hz, WHITE); };
@@ -2702,18 +2751,20 @@ function poolStream(x, z) {
         tail.box(-0.8, 0.78, 0, X, Z, 0.02, 0.035, 0.08, WHITE);
       } else if (t.name === 'car') {                            // Suzuki Swift-size hatchback
         const P = [[-1.92, 0.3], [-1.95, 0.62], [-1.88, 0.98], [-1.55, 1.42], [0.12, 1.48], [0.95, 0.98], [1.85, 0.82], [1.95, 0.55], [1.92, 0.3]];
-        extrude(body, P, w, WHITE);
-        sideGlass(det, [[-1.62, 1.02], [-1.47, 1.35], [0.08, 1.4], [0.8, 1.02]], w);
-        band(det, P, P[4], P[5], w - 0.1, GLASS); band(det, P, P[2], P[3], w - 0.12, GLASS);
+        const Wn = [[-1.62, 1.02], [-1.47, 1.35], [0.08, 1.4], [0.8, 1.02]];
+        extrude(body, P, w, WHITE, [Wn], [2, 4]);
+        sideGlass(gl, Wn, w);
+        band(gl, P, P[4], P[5], w - 0.1, GLASS); band(gl, P, P[2], P[3], w - 0.12, GLASS);
         det.box(1.93, 0.42, 0, X, Z, 0.05, 0.13, w - 0.04, BLACK); det.box(-1.93, 0.42, 0, X, Z, 0.05, 0.13, w - 0.04, BLACK);
         wheels([1.22, -1.22], 0.29, w - 0.13, 0.19); mirrors(0.75, 1.05);
         plates(det, 1.99, -1.99, 0.52, 0.24, RED_PLATE);
         pair(head, 1.9, 0.74, w - 0.3, 0.03, 0.06, 0.17); pair(tail, -1.92, 0.88, w - 0.18, 0.03, 0.09, 0.1);
       } else if (t.name === 'suv') {                            // Scorpio / Creta-size SUV
         const P = [[-2.2, 0.42], [-2.24, 0.8], [-2.2, 1.74], [0.42, 1.8], [1.15, 1.16], [2.15, 1.05], [2.25, 0.72], [2.2, 0.42]];
-        extrude(body, P, w, WHITE);
-        sideGlass(det, [[-2.06, 1.2], [-2.06, 1.68], [0.38, 1.72], [1.0, 1.2]], w);
-        band(det, P, P[3], P[4], w - 0.1, GLASS); band(det, P, P[1], P[2], w - 0.15, GLASS);
+        const Wn = [[-2.06, 1.2], [-2.06, 1.68], [0.38, 1.72], [1.0, 1.2]];
+        extrude(body, P, w, WHITE, [Wn], [3]);
+        sideGlass(gl, Wn, w);
+        band(gl, P, P[3], P[4], w - 0.1, GLASS); band(gl, P, P[1], P[2], w - 0.15, GLASS);
         det.box(2.23, 0.52, 0, X, Z, 0.05, 0.15, w - 0.03, BLACK); det.box(-2.23, 0.52, 0, X, Z, 0.05, 0.15, w - 0.03, BLACK);
         for (const z of [-(w - 0.15), w - 0.15]) det.box(-0.9, 1.84, z, X, Z, 1.15, 0.03, 0.03, BLACK);     // roof rails
         wheels([1.38, -1.35], 0.36, w - 0.15, 0.23); mirrors(1.0, 1.25);
@@ -2721,21 +2772,23 @@ function poolStream(x, z) {
         pair(head, 2.18, 0.92, w - 0.32, 0.03, 0.07, 0.18); pair(tail, -2.22, 1.0, w - 0.14, 0.03, 0.14, 0.08);
       } else if (t.name === 'micro') {                          // Toyota Hiace microbus (public: black plate)
         const P = [[-2.65, 0.36], [-2.65, 2.2], [1.6, 2.25], [2.45, 1.3], [2.65, 1.02], [2.65, 0.36]];
-        extrude(body, P, w, WHITE);
-        sideGlass(det, [[-2.5, 1.38], [-2.5, 2.02], [1.55, 2.06], [2.22, 1.38]], w);
-        band(det, P, P[2], P[3], w - 0.1, GLASS); band(det, P, [-2.65, 1.4], [-2.65, 2.05], w - 0.15, GLASS);
+        const Wn = [[-2.5, 1.38], [-2.5, 2.02], [1.55, 2.06], [2.22, 1.38]];
+        extrude(body, P, w, WHITE, [Wn], [2]);
+        sideGlass(gl, Wn, w);
+        band(gl, P, P[2], P[3], w - 0.1, GLASS); band(gl, P, [-2.65, 1.4], [-2.65, 2.05], w - 0.15, GLASS);
         det.box(0, 1.15, w + 0.004, X, Z, 2.6, 0.06, 0.004, new THREE.Color(0xb3202a)); det.box(0, 1.15, -w - 0.004, X, Z, 2.6, 0.06, 0.004, new THREE.Color(0xb3202a));
         det.box(2.66, 0.48, 0, X, Z, 0.05, 0.13, w - 0.03, BLACK); det.box(-2.66, 0.48, 0, X, Z, 0.05, 0.13, w - 0.03, BLACK);
         wheels([1.55, -1.45], 0.34, w - 0.14, 0.21); mirrors(2.2, 1.55);
         plates(det, 2.72, -2.72, 0.62, 0.25, BLACK_PLATE);
         pair(head, 2.64, 0.86, w - 0.3, 0.03, 0.08, 0.17); pair(tail, -2.66, 0.95, w - 0.1, 0.03, 0.18, 0.07);
       } else if (t.name === 'bus') {                            // a city bus with a roof carrier (public: black plate)
-        const P = [[-5.25, 0.5], [-5.25, 3.05], [5.05, 3.05], [5.25, 2.8], [5.25, 0.5]];
-        extrude(body, P, w, WHITE);
-        sideGlass(det, [[-4.95, 1.75], [-4.95, 2.72], [4.6, 2.72], [4.6, 1.75]], w);
-        det.box(5.26, 2.12, 0, X, Z, 0.012, 0.62, w - 0.12, GLASS);                    // windscreen
+        const P = [[-5.25, 0.5], [-5.25, 3.05], [5.05, 3.05], [5.25, 2.8], [5.25, 1.5], [5.25, 0.5]];
+        const Wn = [[-4.95, 1.75], [-4.95, 2.72], [4.6, 2.72], [4.6, 1.75]];
+        extrude(body, P, w, WHITE, [Wn], [3]);
+        sideGlass(gl, Wn, w);
+        band(gl, P, P[3], P[4], w, GLASS);                                             // windscreen
         det.box(5.26, 2.86, 0, X, Z, 0.014, 0.12, w - 0.3, BLACK);                     // destination board
-        det.box(-5.26, 2.3, 0, X, Z, 0.012, 0.42, w - 0.25, GLASS);
+        gl.box(-5.26, 2.3, 0, X, Z, 0.012, 0.42, w - 0.25, GLASS);
         det.box(3.6, 1.6, -w - 0.006, X, Z, 0.45, 1.0, 0.006, new THREE.Color(0x2b2f33));   // door on the left (kerb) side
         det.box(0, 1.45, w + 0.004, X, Z, 5.2, 0.1, 0.004, new THREE.Color(0xf2f2ee)); det.box(0, 1.45, -w - 0.004, X, Z, 5.2, 0.1, 0.004, new THREE.Color(0xf2f2ee));
         for (const z of [-(w - 0.2), w - 0.2]) det.box(-0.6, 3.25, z, X, Z, 3.6, 0.05, 0.05, METAL);       // roof carrier
@@ -2746,9 +2799,10 @@ function poolStream(x, z) {
         pair(head, 5.26, 0.98, w - 0.35, 0.02, 0.1, 0.2); pair(tail, -5.27, 1.05, w - 0.18, 0.02, 0.22, 0.09);
       } else if (t.name === 'truck') {                          // Tata LPT-style truck: cab, painted wooden body (black plate)
         const P = [[2.2, 0.62], [2.2, 2.85], [3.62, 2.85], [3.95, 2.18], [4.0, 0.62]];
-        extrude(body, P, w, WHITE);
-        sideGlass(det, [[2.5, 1.85], [2.5, 2.6], [3.52, 2.6], [3.78, 1.85]], w);
-        band(det, P, P[2], P[3], w - 0.15, GLASS);
+        const Wn = [[2.5, 1.85], [2.5, 2.6], [3.52, 2.6], [3.78, 1.85]];
+        extrude(body, P, w, WHITE, [Wn], [2]);
+        sideGlass(gl, Wn, w);
+        band(gl, P, P[2], P[3], w - 0.15, GLASS);
         det.box(4.02, 1.2, 0, X, Z, 0.03, 0.3, w - 0.25, new THREE.Color(0x2a2c2e));        // grille
         det.box(-0.95, 2.05, 0, X, Z, 3.05, 1.05, w + 0.02, WOOD);                           // high wooden body
         det.box(-0.95, 2.55, w + 0.03, X, Z, 3.05, 0.22, 0.01, new THREE.Color(0xe5b30e));   // painted bands
@@ -2763,14 +2817,41 @@ function poolStream(x, z) {
         pair(head, 4.02, 1.0, w - 0.35, 0.02, 0.1, 0.18); pair(tail, -3.95, 0.82, w - 0.2, 0.02, 0.08, 0.12);
       } else {                                                  // Safa tempo, the electric three-wheeler
         const P = [[-1.65, 0.36], [-1.65, 1.8], [1.18, 1.8], [1.55, 1.2], [1.65, 0.36]];
-        extrude(body, P, w, WHITE);
-        sideGlass(det, [[-1.5, 1.18], [-1.5, 1.62], [1.1, 1.62], [1.36, 1.18]], w);
-        band(det, P, P[2], P[3], w - 0.08, GLASS);
+        const Wn = [[-1.5, 1.18], [-1.5, 1.62], [1.1, 1.62], [1.36, 1.18]];
+        extrude(body, P, w, WHITE, [Wn], [2]);
+        sideGlass(gl, Wn, w);
+        band(gl, P, P[2], P[3], w - 0.08, GLASS);
         det.box(-0.3, 1.86, 0, X, Z, 1.4, 0.05, w + 0.04, new THREE.Color(0xf0f0ee));        // roof
         det.wheel(1.25, 0.26, 0, 0.26, 0.14, TYRE); wheels([-1.0], 0.26, w - 0.08, 0.14);
         plates(det, 1.7, -1.7, 0.55, 0.2, BLACK_PLATE);
         head.box(1.64, 1.0, 0, X, Z, 0.02, 0.08, 0.1, WHITE);
         pair(tail, -1.66, 0.62, w - 0.14, 0.02, 0.06, 0.08);
+      }
+      // the driver sits on the right (Nepal drives on the left); passengers where they sit
+      if (t.name === 'bike') {
+        seated(xtra, -0.62, 0.92, 0, [1, 0], pick(SHIRTS), pick(SKINS), 0.95);          // pillion
+        xtra.blob(-0.62, 1.72, 0, 0.13, 0.13, 0.12, pick(SHIRTS));                     // helmet
+      } else if (t.name === 'car') {
+        seated(ppl, -0.3, 0.52, 0.36); seated(xtra, -0.3, 0.52, -0.36); seated(xtra, -1.15, 0.52, 0.34);
+      } else if (t.name === 'suv') {
+        seated(ppl, -0.05, 0.75, 0.42); seated(xtra, -0.05, 0.75, -0.42); seated(xtra, -1.05, 0.78, 0.42); seated(xtra, -1.05, 0.78, -0.42);
+      } else if (t.name === 'micro') {
+        seated(ppl, 1.42, 0.82, 0.48);
+        seated(xtra, 1.42, 0.82, -0.48);
+        for (const x of [0.55, -0.35, -1.25, -2.15]) for (const z of [-0.6, 0, 0.6]) if (Math.random() < 0.8) seated(xtra, x, 0.82, z);
+      } else if (t.name === 'bus') {
+        seated(ppl, 4.4, 1.35, 0.75);
+        for (let x = 3.4; x > -4.7; x -= 0.85) for (const z of [-0.95, -0.45, 0.45, 0.95]) if (Math.random() < 0.75) seated(xtra, x, 1.45, z);
+        for (let x = 2.5; x > -3.5; x -= 1.6) if (Math.random() < 0.6) {      // standing in the aisle, holding the rail
+          const sh = pick(SHIRTS), sk = pick(SKINS);
+          xtra.box(x, 1.05 + 0.45, 0, X, Z, 0.08, 0.45, 0.13, TROUSERS); xtra.box(x, 1.05 + 1.2, 0, X, Z, 0.12, 0.3, 0.2, sh);
+          xtra.blob(x, 1.05 + 1.62, 0, 0.1, 0.125, 0.1, sk); xtra.blob(x - 0.02, 1.05 + 1.67, 0, 0.105, 0.09, 0.105, HAIR);
+        }
+      } else if (t.name === 'truck') {
+        seated(ppl, 3.2, 1.45, 0.6); seated(xtra, 3.2, 1.45, -0.55);
+      } else {
+        seated(ppl, 0.95, 0.72, 0);
+        for (const x of [-0.45, -1.1]) { if (Math.random() < 0.8) seated(xtra, x, 0.75, -0.42, [0, 1]); if (Math.random() < 0.8) seated(xtra, x, 0.75, 0.42, [0, -1]); }
       }
       const inst = (g, mat, shadow) => {
         const m = new THREE.InstancedMesh(g.geometry(), mat, t.n);
@@ -2782,6 +2863,9 @@ function poolStream(x, z) {
       t.mBody = inst(body, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.35, metalness: 0.3, side: THREE.DoubleSide }), true);
       t.mDet = inst(det, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6, side: THREE.DoubleSide }), true);
       t.mHead = inst(head, new THREE.MeshBasicMaterial({ toneMapped: false }), false);
+      t.mGlass = inst(gl, glassMat, false);
+      t.mPpl = ppl.empty ? null : inst(ppl, pplMat, true);
+      t.mXtra = inst(xtra, pplMat, true);
       t.mTail = inst(tail, new THREE.MeshBasicMaterial({ toneMapped: false }), false);
       const cc = new THREE.Color();
       for (let i = 0; i < t.n; i++) {
@@ -2801,10 +2885,11 @@ function poolStream(x, z) {
     const laneEnds = (lane, F, sg) => lane === 1 ? F.ln < 1.3 : lane >= 2 ? fw(F, sg) < 0.4 : false;
     const slow = t => t.name === 'bus' || t.name === 'truck' || t.name === 'tempo';
     const cars = [];
-    TYPES.forEach(t => { for (let i = 0; i < t.n; i++) cars.push({ t, i, s: 0, dir: 1, lane: 0, lat: 0, v: 0, v0: 10, wob: 0, stop: 0, body: null, brake: false, lc: 0, gap: 1e9, vl: 0, want: 0, end: 1e9 }); });
+    const XTRA = { bike: 0.45, car: 0.5, suv: 0.5, micro: 0.95, bus: 0.95, truck: 0.5, tempo: 0.85 };
+    TYPES.forEach(t => { for (let i = 0; i < t.n; i++) cars.push({ t, i, xtra: Math.random() < XTRA[t.name], s: 0, dir: 1, lane: 0, lat: 0, v: 0, v0: 10, wob: 0, stop: 0, body: null, brake: false, lc: 0, gap: 1e9, vl: 0, want: 0, end: 1e9 }); });
     KTM.cars = cars;
     const WIN = 520;                                   // traffic lives this far ahead of / behind the bus
-    let busS = 0, busO = 0, busV = 0;
+    let busS = 0, busO = 0, busV = 0, lastBusS = 0;
     let h2 = 12345;
     const rand2 = () => (h2 = (h2 * 16807) % 2147483647) / 2147483647;
     const rel = s => { let d = ((s - busS) % LOOP + LOOP) % LOOP; if (d > LOOP / 2) d -= LOOP; return d; };
@@ -2859,15 +2944,22 @@ function poolStream(x, z) {
     }
     const q4 = new THREE.Quaternion(), p4 = new THREE.Vector3(), one = new THREE.Vector3(1, 1, 1), Yax = new THREE.Vector3(0, 1, 0), m4 = new THREE.Matrix4();
     const tailCol = new THREE.Color(), headCol = new THREE.Color(), cY = new CANNON.Vec3(0, 1, 0);
-    const qP = new THREE.Quaternion(), Zax = new THREE.Vector3(0, 0, 1);
+    const qP = new THREE.Quaternion(), Zax = new THREE.Vector3(0, 0, 1), ZERO4 = new THREE.Matrix4().makeScale(0, 0, 0);
     KTM.update = (dt) => {
       if (!bus) return;
       dt = Math.min(dt, 0.1);
       updateSignals(dt);
+      busDrvMesh.visible = !cam || cam.id !== 'driver';     // the driver's camera is his eyes
       const bp = bus.chassis.position, L0 = locate(bp.x, -bp.z);
       busS = L0.s; busO = L0.o;
       const F0 = frame(busS);
       busV = bus.chassis.velocity.x * F0.tx - bus.chassis.velocity.z * F0.ty;     // bus speed along +s
+      if (Math.abs(rel(lastBusS)) > 150) {             // the bus jumped (reset): spread everyone around it again
+        for (const c of cars) place(c, busS + (rand2() * 2 - 1) * WIN);
+        for (const p of peds) if (p.kind === 'walk') placeWalker(p, busS + (rand2() * 2 - 1) * WINP);
+        pedAnchor = -1e9;
+      }
+      lastBusS = busS;
       // is the lane at lat free for c (the player's bus counts as traffic too)?
       // tight: merging at walking pace into a queue needs less room
       const laneFree = (c, lat, tight = false) => {
@@ -2928,7 +3020,7 @@ function poolStream(x, z) {
           if (bg > -8 && bg < gap && Math.abs(busLat - c.lat) < (2.5 + c.t.Wd) / 2 + 0.4) { gap = Math.max(0.1, bg); vl = Math.max(0, dir * busV); }
           if (c.end - c.t.L / 2 - 1 < gap) { gap = Math.max(0.1, c.end - c.t.L / 2 - 1); vl = 0; }   // wait at the end of the lane
           for (const q of sigSites) {                       // stop at red, and at amber unless too close to stop
-            if (q.state === 'g') continue;
+            if (q.state === 'g' && !q.pedsOn) continue;        // (and wait for anyone still on the crossing)
             const d = fwd(c.s, q.s - dir * q.D, dir) - c.t.L / 2;
             if (d < 0 || d > 150 || (q.state === 'a' && d < c.v * c.v / 7 + 1)) continue;
             if (d < gap) { gap = Math.max(0.1, d); vl = 0; }
@@ -2991,6 +3083,8 @@ function poolStream(x, z) {
         q4.setFromAxisAngle(Yax, yaw).multiply(qP.setFromAxisAngle(Zax, pitch));
         m4.compose(p4.set(x, y0, -y), q4, one);
         c.t.mBody.setMatrixAt(c.i, m4); c.t.mDet.setMatrixAt(c.i, m4); c.t.mHead.setMatrixAt(c.i, m4); c.t.mTail.setMatrixAt(c.i, m4);
+        c.t.mGlass.setMatrixAt(c.i, m4); if (c.t.mPpl) c.t.mPpl.setMatrixAt(c.i, m4);
+        c.t.mXtra.setMatrixAt(c.i, c.xtra ? m4 : ZERO4);
         c.t.mTail.setColorAt(c.i, c.brake ? tailCol.setRGB(3, 0.15, 0.08) : night ? tailCol.setRGB(1.2, 0.05, 0.03) : tailCol.setRGB(0.45, 0.03, 0.03));
         c.t.mHead.setColorAt(c.i, night ? headCol.setRGB(3, 2.9, 2.6) : headCol.setRGB(0.85, 0.85, 0.82));
         // a kinematic collider while near the bus; a knock stops the vehicle for a few seconds
@@ -3006,11 +3100,135 @@ function poolStream(x, z) {
           c.body.velocity.set(hx * c.v, 0, -hy * c.v);
         }
       }
+      updatePeople(dt);
       for (const t of TYPES) {
-        for (const m of [t.mBody, t.mDet, t.mHead, t.mTail]) m.instanceMatrix.needsUpdate = true;
+        for (const m of [t.mBody, t.mDet, t.mHead, t.mTail, t.mGlass, t.mPpl, t.mXtra]) if (m) m.instanceMatrix.needsUpdate = true;
         t.mTail.instanceColor.needsUpdate = true; t.mHead.instanceColor.needsUpdate = true;
       }
     };
+
+    // --- people on foot -----------------------------------------------------------------
+    // Walkers on the footpaths, people waiting at the OSM bus stops, people crossing at the
+    // signal-controlled zebras while the Ring Road has red. They step out of the bus's way.
+    const NW = 280, NS = 60, NC = 40, NP = NW + NS + NC, WINP = 260;
+    const pedMesh = (g, n, tint = true) => {
+      const m = new THREE.InstancedMesh(g.geometry(), new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9 }), n);
+      m.instanceMatrix.setUsage(THREE.DynamicDrawUsage); m.frustumCulled = false; m.castShadow = true; m.receiveShadow = true;
+      scene.add(m);
+      return m;
+    };
+    const W1 = new THREE.Color(1, 1, 1), SHOE = new THREE.Color(0.07, 0.07, 0.07), SKIN0 = new THREE.Color('#9a6442');
+    const gT = new Geo(), gH = new Geo(), gL = new Geo(), gA = new Geo(), gD = new Geo();
+    gT.cyl(0, 0.86, 1.45, 0, 0.11, 0.18, W1, 1.12);                       // hips to shoulders
+    gH.cyl(0, 1.42, 1.53, 0, 0.05, 0.05, SKIN0);                           // neck, head, hair
+    gH.blob(0, 1.63, 0, 0.1, 0.125, 0.095, SKIN0); gH.blob(-0.02, 1.68, 0, 0.105, 0.09, 0.1, HAIR);
+    gL.cyl(0, -0.84, 0, 0, 0.065, 0.075, W1, 1.15); gL.box(0.05, -0.84, 0, [1, 0], [0, 1], 0.12, 0.035, 0.055, SHOE);   // leg from the hip, shoe
+    gA.cyl(0, -0.62, 0, 0, 0.042, 0.042, W1, 1.12); gA.blob(0, -0.66, 0, 0.04, 0.055, 0.035, SKIN0);                     // arm from the shoulder, hand
+    gD.cyl(0, 0.4, 0.95, 0, 0.17, 0.23, W1, 0.78);                        // kurta below the hips
+    const mT = pedMesh(gT, NP), mH = pedMesh(gH, NP), mL = pedMesh(gL, 2 * NP), mA = pedMesh(gA, 2 * NP), mD = pedMesh(gD, NP);
+    const KURTA = ['#c2185b', '#e07a1f', '#f2c94c', '#2e7d6b', '#7b1fa2', '#d84343', '#3949ab', '#f5f0e6'].map(c => new THREE.Color(c));
+    const LEGS = ['#22252c', '#2f3a55', '#3b3b3b', '#5a4a3a', '#1c2a44'].map(c => new THREE.Color(c));
+    const peds = []; KTM.peds = peds;
+    for (let i = 0; i < NP; i++) {
+      const female = Math.random() < 0.45, kid = Math.random() < 0.1;
+      const p = { i, kind: i < NW ? 'walk' : i < NW + NS ? 'stop' : 'cross', on: false, s: 0, side: 1, frac: 0, dir: 1, v: 0, v0: 1.0 + Math.random() * 0.5,
+        phase: Math.random() * 6.3, sc: kid ? 0.62 + Math.random() * 0.12 : 0.94 + Math.random() * 0.12, female, dodge: 0, stun: 0, body: null };
+      const top = female ? pick(KURTA) : pick(SHIRTS);
+      mT.setColorAt(i, top); mD.setColorAt(i, top);
+      const g = 0.75 + Math.random() * 0.45; mH.setColorAt(i, new THREE.Color(g, g, g));
+      const legs = female ? pick(KURTA).clone().lerp(W1, 0.4) : pick(LEGS);
+      mL.setColorAt(2 * i, legs); mL.setColorAt(2 * i + 1, legs); mA.setColorAt(2 * i, top); mA.setColorAt(2 * i + 1, top);
+      peds.push(p);
+    }
+    const stopsS = (D.stops || []).map(q => ({ s: S[q.k], side: q.side }));
+    const footO = (k, side, frac) => EDGE(k, side) + 0.35 + frac * (FOOT - 0.7);
+    function placeWalker(p, sNew) {
+      Object.assign(p, { on: true, s: wrapS(sNew), side: rand2() < 0.5 ? 1 : -1, frac: rand2(), dir: rand2() < 0.5 ? 1 : -1, v: p.v0, dodge: 0 });
+    }
+    let pedAnchor = -1e9;
+    function assignStanders() {                     // people at the bus stops and zebras near the bus
+      let si = NW, ci = NW + NS;
+      for (const q of stopsS) {
+        if (Math.abs(rel(q.s)) > WINP) continue;
+        const n = 2 + Math.floor(rand2() * 5);
+        for (let j = 0; j < n && si < NW + NS; j++, si++) Object.assign(peds[si], { on: true, s: wrapS(q.s + (rand2() - 0.5) * 8), side: q.side, frac: 0.1 + rand2() * 0.5, v: 0, face: (rand2() - 0.5) * 0.8 });
+      }
+      for (; si < NW + NS; si++) peds[si].on = false;
+      for (const q of sigSites) {
+        if (Math.abs(rel(q.s)) > WINP) continue;
+        for (let j = 0; j < 8 && ci < NP; j++, ci++) Object.assign(peds[ci], { on: true, site: q, s: wrapS(q.s + (rand2() - 0.5) * 2.4), side: j < 4 ? 1 : -1, x0: null, cross: 0, v: 0, face: 0 });
+      }
+      for (; ci < NP; ci++) peds[ci].on = false;
+    }
+    const pM = new THREE.Matrix4(), pQ = new THREE.Quaternion(), pV = new THREE.Vector3(), pS = new THREE.Vector3(), part = new THREE.Matrix4(), rot = new THREE.Matrix4();
+    function updatePeople(dt) {
+      if (Math.abs(rel(pedAnchor)) > 60) { pedAnchor = busS; assignStanders(); }
+      const bp = bus.chassis.position, fw = bus.forward();
+      for (const q of sigSites) q.pedsOn = 0;
+      for (const p of peds) {
+        if (!p.on && p.kind === 'walk') placeWalker(p, busS + (rand2() * 2 - 1) * WINP);
+        if (!p.on) { for (const m of [mT, mH, mD]) m.setMatrixAt(p.i, ZERO4); for (const m of [mL, mA]) { m.setMatrixAt(2 * p.i, ZERO4); m.setMatrixAt(2 * p.i + 1, ZERO4); } continue; }
+        let F = frame(p.s), off, hx, hy, moving = false;
+        if (p.kind === 'walk') {
+          off = p.side * (footO(F.k, p.side, p.frac) + p.dodge);
+          hx = F.tx * p.dir; hy = F.ty * p.dir;
+        } else if (p.kind === 'stop') {
+          off = p.side * (footO(F.k, p.side, p.frac) + p.dodge);
+          const c = Math.cos(p.face), sn = Math.sin(p.face), fx = F.ty * p.side, fy = -F.tx * p.side;   // facing the road
+          hx = fx * c - fy * sn; hy = fx * sn + fy * c;
+        } else {                                   // zebra: wait at the kerb, cross while the Ring Road has red
+          const q = p.site, eA = EDGE(F.k, p.side) + 0.5, eB = EDGE(F.k, -p.side) + 0.5;
+          if (!p.cross && q.state === 'r' && q.left > 7 && rand2() < dt * 1.5) p.cross = 1;
+          if (p.cross) { p.x0 = (p.x0 ?? 0) + 1.3 * dt; if (p.x0 >= eA + eB) { p.side = -p.side; p.cross = 0; p.x0 = 0; } }
+          const t = p.cross ? p.x0 : 0;
+          off = p.side * (eA - t);
+          if (p.cross && Math.abs(off) < Math.max(EDGE(F.k, 1), EDGE(F.k, -1))) q.pedsOn++;
+          moving = !!p.cross;
+          hx = F.ty * p.side; hy = -F.tx * p.side;          // facing across the road, toward the far side
+        }
+        let x = F.x - F.ty * off, y = F.y + F.tx * off;
+        // keep out of the bus's way: stop and step back toward the buildings
+        const dx = x - bp.x, dz = -y - bp.z, along = dx * fw.x + dz * fw.z, lat = dx * fw.z - dz * fw.x;
+        const near = Math.abs(along) < 7 && Math.abs(lat) < 2.6;
+        if (p.kind !== 'cross') { if (near) p.dodge = Math.min(p.dodge + 2.0 * dt, 3.0); else p.dodge = Math.max(0, p.dodge - 0.4 * dt); }
+        p.stun = Math.max(0, p.stun - dt);
+        if (p.kind === 'walk') {
+          const go = near || p.stun > 0 ? 0 : p.v0;
+          p.v += Math.max(-3 * dt, Math.min(1.5 * dt, go - p.v));
+          p.s = wrapS(p.s + p.dir * p.v * dt);
+          moving = p.v > 0.15;
+          if (Math.abs(rel(p.s)) > WINP + 30) placeWalker(p, busS + (rand2() < 0.5 ? 1 : -1) * (WINP - rand2() * 40));
+        }
+        // pose: body, then legs and arms swinging about hip and shoulder
+        const sw = moving ? Math.sin(p.phase += dt * (p.kind === 'cross' ? 1.3 : p.v) * 3.3 / p.sc) * 0.5 : Math.sin(p.phase += dt * 0.7) * 0.03;
+        pQ.setFromAxisAngle(Yax, Math.atan2(hy, hx));
+        pM.compose(pV.set(x, 0, -y), pQ, pS.set(p.sc, p.sc, p.sc));
+        mT.setMatrixAt(p.i, pM); mH.setMatrixAt(p.i, pM); mD.setMatrixAt(p.i, p.female ? pM : ZERO4);
+        for (const [m, y0, z0, k] of [[mL, 0.88, 0.09, 1], [mA, 1.42, 0.23, -0.7]]) for (const sd of [-1, 1]) {
+          part.copy(pM).multiply(rot.makeTranslation(0, y0, z0 * sd)).multiply(rot.makeRotationZ(sw * k * sd));
+          m.setMatrixAt(2 * p.i + (sd > 0 ? 1 : 0), part);
+        }
+        // solid near the bus; a knock makes them stop
+        const close = dx * dx + dz * dz < 25 * 25;
+        if (close && !p.body) {
+          p.body = new CANNON.Body({ mass: 0, type: CANNON.Body.KINEMATIC, shape: new CANNON.Cylinder(0.22 * p.sc, 0.22 * p.sc, 1.7 * p.sc, 6) });
+          p.body.addEventListener('collide', e => { if (e.body === bus.chassis) p.stun = 3; });
+          world.addBody(p.body);
+        } else if (!close && p.body) { world.removeBody(p.body); p.body = null; }
+        if (p.body) p.body.position.set(x, 0.85 * p.sc, -y);
+      }
+      for (const m of [mT, mH, mD, mL, mA]) m.instanceMatrix.needsUpdate = true;
+    }
+
+    // the bus's own driver and passengers, on its seats (2+1 sofas, nine rows behind the driver)
+    const busPpl = new Geo(), busDrv = new Geo();
+    seated(busDrv, 4.07, 1.7, 0.62);
+    for (let i = 0; i < 9; i++) {
+      const xl = 3.55 - 0.95 * i - 0.08;
+      for (const zl of [0.93, 0.43, -0.9]) if (Math.random() < 0.7) seated(busPpl, xl, 1.7, zl);
+    }
+    const busDrvMesh = busDrv.mesh(pplMat, body), busPplMesh = busPpl.mesh(pplMat, body);
+    busDrvMesh.rotation.y = busPplMesh.rotation.y = -Math.PI / 2;          // their +x is the bus's forward (+z)
 
     // start: Kalanki, heading for Balkhu in the outer carriageway (drive on the left)
     {
@@ -3023,6 +3241,7 @@ function poolStream(x, z) {
     chunkStream(KTM.start.x, KTM.start.z, true);
     busS = locate(KTM.start.x, -KTM.start.z).s;
     for (const c of cars) place(c, busS + (rand2() * 2 - 1) * WIN);
+    lastBusS = busS;
     KTM.ready = true;
     placeBusAtStart();
   }

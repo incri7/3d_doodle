@@ -234,6 +234,21 @@ def signals(meta, loop, o):
     return out
 
 
+def bus_stops(meta, loop, o):
+    """OSM bus stops on the Ring Road (world/fetch_signals.py): index and side of the road."""
+    path = os.path.join(DATA, "bus_stops.json")
+    if not os.path.exists(path):
+        return []
+    out = []
+    for n in json.load(open(path)):
+        p = np.array([(n["lon"] - meta["lon0"]) * meta["kx"] - o[0], (n["lat"] - meta["lat0"]) * meta["ky"] - o[1]])
+        k, off = loop.offset(p)
+        if abs(float(off[0])) < 35:
+            out.append({"k": int(k[0]), "side": 1 if off[0] > 0 else -1})
+    print("bus stops", len(out))
+    return out
+
+
 def q20(a):
     return [int(v) for v in np.clip(np.round(np.asarray(a) * 20), 0, 20)]
 
@@ -516,7 +531,7 @@ def main():
                  "flyovers": [[round(a, 1), round(b, 1)] for a, b in flyovers],
                  "median": S.MEDIAN, "lane": S.LANE, "shoulder": S.SHOULDER, "sep": S.SEP, "foot": S.FOOT,
                  "start": int(kk["Kalanki"])},
-        "stubs": stubs, "places": pl, "signs": signs(loop, edge), "signals": signals(meta, loop, o),
+        "stubs": stubs, "places": pl, "signs": signs(loop, edge), "signals": signals(meta, loop, o), "stops": bus_stops(meta, loop, o),
         "near": near, "far": far,
         "terrain": {"x0": round(x0, 1), "y0": round(y0, 1), "step": TSTEP, "nx": len(xs), "ny": len(ys),
                     "h": base64.b64encode(hq.tobytes()).decode()},
