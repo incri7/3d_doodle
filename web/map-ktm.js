@@ -15,6 +15,7 @@ const KTM_CELL = 50, KTM_REACH = 2;
 const ktmCells = new Map(), ktmActive = new Set();
 let ktmOwner = null;                 // chunk collecting the bodies being made
 function poolAdd(b) {
+  b.aabbNeedsUpdate = true;          // placed after the shape was added: the cached bounds are stale
   const key = Math.floor(b.position.x / KTM_CELL) + ',' + Math.floor(b.position.z / KTM_CELL);
   if (!ktmCells.has(key)) ktmCells.set(key, new Set());
   ktmCells.get(key).add(b);
@@ -29,6 +30,12 @@ function poolDrop(b) {
 function poolBox(half, pos, yaw = 0) {
   const b = new CANNON.Body({ mass: 0, shape: new CANNON.Box(new CANNON.Vec3(...half)) });
   b.position.set(...pos); b.quaternion.setFromEuler(0, yaw, 0); poolAdd(b);
+}
+function poolBoxP(half, pos, yaw, pitch) {         // yawed, then tilted along its length (ramps)
+  const b = new CANNON.Body({ mass: 0, shape: new CANNON.Box(new CANNON.Vec3(...half)) });
+  b.position.set(...pos);
+  b.quaternion.setFromAxisAngle(new CANNON.Vec3(0, 1, 0), yaw).mult(new CANNON.Quaternion().setFromAxisAngle(new CANNON.Vec3(0, 0, 1), pitch), b.quaternion);
+  poolAdd(b);
 }
 function poolCyl(r, h, pos) {
   const b = new CANNON.Body({ mass: 0, shape: new CANNON.Cylinder(r, r, h, 8) });
@@ -100,6 +107,7 @@ function poolStream(x, z) {
   const yellow = new THREE.MeshStandardMaterial({ color: 0xd6a22a, roughness: 0.55 });
   const whiteP = new THREE.MeshStandardMaterial({ color: 0xdcdcd4, roughness: 0.55 });
   const rail = new THREE.MeshStandardMaterial({ color: 0x8c8a84, roughness: 0.7, side: THREE.DoubleSide });
+  const concrete = new THREE.MeshStandardMaterial({ color: 0xa29e95, roughness: 0.9, side: THREE.DoubleSide });
   // one bay of a Kathmandu house: 3.1 m wide, 2.9 m storey, window + slab band
   const bayTex = tex(128, 128, (g, w, h) => {
     noisy(g, w, h, '#ffffff', 0.12, 600);
@@ -223,6 +231,18 @@ function poolStream(x, z) {
         tx: TG[k][0] + (TG[k2][0] - TG[k][0]) * f, ty: TG[k][1] + (TG[k2][1] - TG[k][1]) * f, w: W[k] + (W[k2] - W[k]) * f };
     };
     const inBridge = s => r.bridges.some(([a, b]) => s >= a && s <= b);
+    // flyover (Gwarko - Balkumari): the inner carriageways climb onto a deck; OSM's bridge
+    // ways are the elevated part, with 150 m ramps beyond each end
+    const FLY_H = 6.8, RAMP = 150;
+    const flyH = s => {
+      s = ((s % LOOP) + LOOP) % LOOP;
+      for (const [a, b] of r.flyovers || []) {
+        if (s <= a - RAMP || s >= b + RAMP) continue;
+        const t = s < a ? (s - (a - RAMP)) / RAMP : s > b ? (b + RAMP - s) / RAMP : 1;
+        return FLY_H * t * t * (3 - 2 * t);
+      }
+      return 0;
+    };
 
     // --- where am I: spatial hash of the centreline --------------------------------
     const HC = 40, hash = new Map();
@@ -365,29 +385,33 @@ function poolStream(x, z) {
       const sStart = S[k0], sEnd = sOf(k1);
       const gAsph = new Geo(), gMed = new Geo(), gKerb = new Geo(), gYel = new Geo(), gWhite = new Geo(), gPav = new Geo(), gVerge = new Geo(), gRail = new Geo();
       // strip between offsets f0(k) and f1(k) (functions), heights h0/h1; skip(k) leaves a segment out
+      const hv = (h, k) => typeof h === 'function' ? h(k) : h;       // heights: numbers or functions of k
       function strip(g, sg, f0, f1, h0, h1, us, vs, skip) {
         for (let k = k0; k < k1; k++) {
           if (skip && skip(k)) continue;
-          let a0 = sg * f0(k), a1 = sg * f1(k), b0 = sg * f0(k + 1), b1 = sg * f1(k + 1), H0 = h0, H1 = h1;
-          if (sg < 0) [a0, a1, b0, b1, H0, H1] = [a1, a0, b1, b0, h1, h0];
+          let a0 = sg * f0(k), a1 = sg * f1(k), b0 = sg * f0(k + 1), b1 = sg * f1(k + 1);
+          let A0 = hv(h0, k), B0 = hv(h0, k + 1), A1 = hv(h1, k), B1 = hv(h1, k + 1);
+          if (sg < 0) [a0, a1, b0, b1, A0, A1, B0, B1] = [a1, a0, b1, b0, A1, A0, B1, B0];
           const s0 = sOf(k), s1 = sOf(k + 1);
-          g.quad(at(k, a0, H0), at(k + 1, b0, H0), at(k + 1, b1, H1), at(k, a1, H1),
-            [s0 / us, a0 / vs + H0], [s1 / us, b0 / vs + H0], [s1 / us, b1 / vs + H1], [s0 / us, a1 / vs + H1]);
+          g.quad(at(k, a0, A0), at(k + 1, b0, B0), at(k + 1, b1, B1), at(k, a1, A1),
+            [s0 / us, a0 / vs + A0], [s1 / us, b0 / vs + B0], [s1 / us, b1 / vs + B1], [s0 / us, a1 / vs + A1]);
         }
       }
       const narrow = k => W[wrap(k)] === 0 && W[wrap(k + 1)] === 0;
       const c = v => () => v;
+      const hk = k => flyH(sOf(k));
+      const elev = k => hk(k) > 0 || hk(k + 1) > 0;          // the inner carriageways are up on the flyover
       for (const sg of [1, -1]) {
         const gp = k => isGap(sg, k) || isGap(sg, k + 1);
         // inner carriageway, separator, outer carriageway
-        strip(gAsph, sg, c(M0), c(I1), 0, 0, 8, 8);
+        strip(gAsph, sg, c(M0), c(I1), 0, 0, 8, 8, elev);
         strip(gAsph, sg, S1, EDGE, 0, 0, 8, 8, narrow);
         strip(gMed, sg, c(I1), S1, 0.25, 0.25, 2, 2, narrow);
-        for (const [lo, hi, skip] of [[c(M0), c(I1)], [S1, EDGE, narrow]]) {
+        for (const [lo, hi, skip] of [[c(M0), c(I1), elev], [S1, EDGE, narrow]]) {
           for (const e of [k => lo(k) + 0.3, k => hi(k) - 0.3]) strip(gYel, sg, k => e(k) - 0.06, k => e(k) + 0.06, 0.008, 0.008, 1, 1, skip);
         }
         // kerb faces
-        strip(gKerb, sg, c(M0), c(M0), 0, 0.25, 2, 1);
+        strip(gKerb, sg, c(M0), c(M0), 0, 0.25, 2, 1, elev);
         strip(gKerb, sg, c(I1), c(I1), 0, 0.25, 2, 1, narrow);
         strip(gKerb, sg, S1, S1, 0, 0.25, 2, 1, narrow);
         strip(gKerb, sg, EDGE, EDGE, 0, 0.2, 2, 1, gp);
@@ -402,13 +426,46 @@ function poolStream(x, z) {
           for (let s = Math.ceil(sStart / 9) * 9; s < sEnd - 1; s += 9) {
             const A = frame(s), B = frame(s + 3);
             if (!need(A.k) || !need(B.k)) continue;
-            const pa = (F, o) => P2(F.x - F.ty * o, F.y + F.tx * o, 0.01);
+            const pa = (F, o) => P2(F.x - F.ty * o, F.y + F.tx * o, 0.01 + (mid(F.k) < I1 ? flyH(sOf(F.k) + F.f * r.step) : 0));
             const oa = sg * mid(A.k), ob = sg * mid(B.k), d = 0.07;
             gWhite.quad(pa(A, oa - d), pa(B, ob - d), pa(B, ob + d), pa(A, oa + d), [0, 0], [1, 0], [1, 1], [0, 1]);
           }
         }
       }
-      strip(gMed, 1, c(-M0), c(M0), 0.25, 0.25, 2, 2);
+      strip(gMed, 1, c(-M0), c(M0), 0.25, 0.25, 2, 2, elev);
+      // the flyover: deck, lane markings, parapets, central barrier, fascia / ramp walls, piers
+      const gConc = new Geo(), gPier = new Geo();
+      {
+        const DW = I1 + 0.3, noE = k => !elev(k), deep = k => hk(k) > 4.5 && hk(k + 1) > 4.5;
+        const up = d => k => hk(k) + d;
+        strip(gMed, 1, c(-I1), c(I1), 0.02, 0.02, 2, 2, noE);                       // ground under the deck
+        for (const sg of [1, -1]) {
+          strip(gAsph, sg, c(0.3), c(DW), hk, hk, 8, 8, noE);
+          for (const e of [M0 + 0.3, I1 - 0.3]) strip(gYel, sg, c(e - 0.06), c(e + 0.06), up(0.008), up(0.008), 1, 1, noE);
+          strip(gConc, sg, c(DW), c(DW), k => deep(k) ? hk(k) - 1.2 : 0, hk, 3, 3, noE);  // fascia, solid wall on the ramps
+          strip(gConc, sg, c(DW), c(DW), hk, up(1.0), 3, 3, noE);                     // parapet
+          strip(gConc, sg, c(DW - 0.25), c(DW - 0.25), hk, up(1.0), 3, 3, noE);
+          strip(gConc, sg, c(DW - 0.25), c(DW), up(1.0), up(1.0), 3, 3, noE);
+          strip(gConc, sg, c(0.3), c(0.3), hk, up(0.85), 3, 3, noE);                  // central barrier
+        }
+        strip(gConc, 1, c(-0.3), c(0.3), up(0.85), up(0.85), 3, 3, noE);
+        strip(gConc, 1, c(DW), c(-DW), k => hk(k) - 1.2, k => hk(k) - 1.2, 4, 4, k => !deep(k));   // underside (faces down)
+        for (let k = k0; k < k1; k++) {                                              // where the solid ramp becomes a bridge
+          if (deep(k) === deep(k - 1) || !elev(k)) continue;
+          const h = hk(k) - 1.2;
+          gConc.quad(at(k, -DW, 0), at(k, DW, 0), at(k, DW, h), at(k, -DW, h), [0, 0], [1, 0], [1, 1], [0, 1]);
+        }
+        for (const [a, b] of r.flyovers || []) {                                    // piers every 30 m
+          for (let ps = a + 15; ps < b; ps += 30) {
+            if (ps < sStart || ps >= sEnd) continue;
+            const F = frame(ps), h = flyH(ps) - 1.2, tz = [F.tx, -F.ty], nz = [-F.ty, -F.tx];
+            gPier.box(F.x, h / 2, -F.y, tz, nz, 0.7, h / 2, 1.6);
+            gPier.box(F.x, h - 0.35, -F.y, tz, nz, 0.9, 0.35, DW - 1.0);              // pier cap
+            poolBox([0.7, h / 2, 1.6], [F.x, h / 2, -F.y], Math.atan2(F.ty, F.tx));
+          }
+        }
+      }
+      gConc.mesh(concrete, group, false); gPier.mesh(concrete, group, true);
       gAsph.mesh(asphalt, group, false); gMed.mesh(medianMat, group, false); gKerb.mesh(kerb, group, false);
       gYel.mesh(yellow, group, false); gWhite.mesh(whiteP, group, false); gPav.mesh(pavers, group, false);
       gVerge.mesh(vergeMat, group, false); gRail.mesh(rail, group, false);
@@ -441,6 +498,13 @@ function poolStream(x, z) {
         const yaw = Math.atan2(ty, tx), km = wrap(k + 1);
         const add = (o, hw, h) => poolBox([len, h / 2, hw], [cx + nx * o, h / 2, -(cy + ny * o)], yaw);
         add(0, M0, 0.25);
+        const ha = flyH(sOf(k)), hb = flyH(sOf(k) + L);
+        if (ha > 0 || hb > 0) {                         // flyover deck (solid on the ramps), parapets, barrier
+          const hm = (ha + hb) / 2, pitch = Math.atan2(hb - ha, L), th = hm < 4.5 ? Math.max(0.4, hm) : 0.4, DW = I1 + 0.3;
+          poolBoxP([len, th / 2, DW], [cx, hm - th / 2, -cy], yaw, pitch);
+          for (const o of [DW - 0.12, -(DW - 0.12)]) poolBoxP([len, 0.5, 0.15], [cx + nx * o, hm + 0.5, -(cy + ny * o)], yaw, pitch);
+          poolBoxP([len, 0.42, 0.3], [cx, hm + 0.42, -cy], yaw, pitch);
+        }
         for (const sg of [1, -1]) {
           if (W[km] > 0.3) add(sg * (I1 + S1(km)) / 2, r.sep * W[km] / 2, 0.25);
           if (!isGap(sg, k) && !isGap(sg, k + 1) && !isGap(sg, k + 2)) add(sg * (EDGE(km) + FOOT / 2), FOOT / 2, 0.2);
@@ -562,13 +626,13 @@ function poolStream(x, z) {
         }
       }
       for (let s = 20 + Math.ceil((sStart - 20) / 32) * 32; s < sEnd && s < LOOP - 12; s += 32) {
-        const F = frame(s), x = F.x, y = F.y, tz = [F.tx, -F.ty];
-        lightG.box(x, 5.25, -y, tz, [-tz[1], tz[0]], 0.09, 5.0, 0.09, grey);
+        const F = frame(s), x = F.x, y = F.y, tz = [F.tx, -F.ty], fh = flyH(s);
+        lightG.box(x, 5.25 + fh, -y, tz, [-tz[1], tz[0]], 0.09, 5.0, 0.09, grey);
         for (const sg of [1, -1]) {
           const nx = -F.ty * sg, ny = F.tx * sg, nz = [nx, -ny];
-          lightG.box(x + nx * 1.0, 10.15, -(y + ny * 1.0), nz, tz, 1.0, 0.04, 0.04, grey);
-          lightG.box(x + nx * 1.9, 10.07, -(y + ny * 1.9), nz, tz, 0.35, 0.06, 0.14, lamp);
-          lights.push(new THREE.Vector3(x + nx * 1.9, 10.0, -(y + ny * 1.9)));
+          lightG.box(x + nx * 1.0, 10.15 + fh, -(y + ny * 1.0), nz, tz, 1.0, 0.04, 0.04, grey);
+          lightG.box(x + nx * 1.9, 10.07 + fh, -(y + ny * 1.9), nz, tz, 0.35, 0.06, 0.14, lamp);
+          lights.push(new THREE.Vector3(x + nx * 1.9, 10.0 + fh, -(y + ny * 1.9)));
         }
       }
       poleG.mesh(colMat, group, false); lightG.mesh(colMat, group, false);
@@ -802,6 +866,7 @@ function poolStream(x, z) {
     }
     const q4 = new THREE.Quaternion(), p4 = new THREE.Vector3(), one = new THREE.Vector3(1, 1, 1), Yax = new THREE.Vector3(0, 1, 0), m4 = new THREE.Matrix4();
     const tailCol = new THREE.Color(), headCol = new THREE.Color(), cY = new CANNON.Vec3(0, 1, 0);
+    const qP = new THREE.Quaternion(), Zax = new THREE.Vector3(0, 0, 1);
     KTM.update = (dt) => {
       if (!bus) return;
       dt = Math.min(dt, 0.1);
@@ -881,8 +946,9 @@ function poolStream(x, z) {
         const F = frame(c.s), o = c.dir * c.lat;
         const x = F.x - F.ty * o, y = F.y + F.tx * o;
         const hx = F.tx * c.dir, hy = F.ty * c.dir, yaw = Math.atan2(hy, hx);
-        q4.setFromAxisAngle(Yax, yaw);
-        m4.compose(p4.set(x, 0, -y), q4, one);
+        const up = c.lane < 2, y0 = up ? flyH(c.s) : 0, pitch = up ? Math.atan((flyH(c.s + c.dir * 2) - flyH(c.s - c.dir * 2)) / 4) : 0;
+        q4.setFromAxisAngle(Yax, yaw).multiply(qP.setFromAxisAngle(Zax, pitch));
+        m4.compose(p4.set(x, y0, -y), q4, one);
         c.t.mBody.setMatrixAt(c.i, m4); c.t.mDet.setMatrixAt(c.i, m4); c.t.mHead.setMatrixAt(c.i, m4); c.t.mTail.setMatrixAt(c.i, m4);
         c.t.mTail.setColorAt(c.i, c.brake ? tailCol.setRGB(3, 0.15, 0.08) : night ? tailCol.setRGB(1.2, 0.05, 0.03) : tailCol.setRGB(0.45, 0.03, 0.03));
         c.t.mHead.setColorAt(c.i, night ? headCol.setRGB(3, 2.9, 2.6) : headCol.setRGB(0.85, 0.85, 0.82));
@@ -894,8 +960,8 @@ function poolStream(x, z) {
           world.addBody(c.body);
         } else if (!near && c.body) { world.removeBody(c.body); c.body = null; }
         if (c.body) {
-          c.body.position.set(x, c.t.Hh / 2, -y);
-          c.body.quaternion.setFromAxisAngle(cY, yaw);
+          c.body.position.set(x, y0 + c.t.Hh / 2, -y);
+          c.body.quaternion.set(q4.x, q4.y, q4.z, q4.w);
           c.body.velocity.set(hx * c.v, 0, -hy * c.v);
         }
       }

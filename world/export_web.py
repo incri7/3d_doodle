@@ -165,23 +165,26 @@ def main():
     wide = np.clip(np.round(wide * 20) / 20, 0, 1)
     edge = NARROW_EDGE + (S.EDGE - NARROW_EDGE) * wide
 
-    # --- bridges --------------------------------------------------------------------------------
-    br = []
+    # --- bridges: short ones cross rivers; the long ones are the flyover's elevated deck -------------
+    def merged(ranges, pad):
+        out = []
+        for s0, s1 in sorted(ranges):
+            if out and s0 <= out[-1][1] + 5:
+                out[-1][1] = max(out[-1][1], s1)
+            else:
+                out.append([s0, s1])
+        return [[a - pad, b + pad] for a, b in out]
+    br, fly = [], []
     for e, l in lines:
-        # river bridges; the long flyovers are drawn at grade, without parapets
-        if e.get("tags", {}).get("bridge") == "yes" and l.length < 200:
-            ks = loop.nearest(np.asarray(l.coords) - o)
-            s0, s1 = loop.s[ks.min()], loop.s[ks.max()]
-            if ks.max() - ks.min() > loop.n / 2:          # wraps around the start
-                continue
-            br.append([s0 - 10, s1 + 10])
-    br.sort()
-    bridges = []
-    for s0, s1 in br:
-        if bridges and s0 <= bridges[-1][1] + 5:
-            bridges[-1][1] = max(bridges[-1][1], s1)
-        else:
-            bridges.append([s0, s1])
+        if e.get("tags", {}).get("bridge") != "yes":
+            continue
+        ks = loop.nearest(np.asarray(l.coords) - o)
+        if ks.max() - ks.min() > loop.n / 2:          # wraps around the start
+            continue
+        (br if l.length < 200 else fly).append([loop.s[ks.min()], loop.s[ks.max()]])
+    bridges = merged(br, 10)
+    flyovers = merged(fly, 0)
+    print("flyovers", [[round(a), round(b)] for a, b in flyovers])
     print("bridges", [round(b[1] - b[0]) for b in bridges])
 
     # --- side road stubs (where the city's roads meet the Ring Road) ------------------------------
@@ -293,6 +296,7 @@ def main():
                  "Copernicus GLO-30 DEM, Sentinel-2 (contains modified Copernicus Sentinel data 2026).",
         "road": {"pts": np.round(P, 2).ravel().tolist(), "step": STEP, "loop": round(loop.L, 1),
                  "wide": [int(v * 20) for v in wide], "bridges": [[round(a, 1), round(b, 1)] for a, b in bridges],
+                 "flyovers": [[round(a, 1), round(b, 1)] for a, b in flyovers],
                  "median": S.MEDIAN, "lane": S.LANE, "shoulder": S.SHOULDER, "sep": S.SEP, "foot": S.FOOT,
                  "start": int(kk["Kalanki"])},
         "stubs": stubs, "places": pl,
