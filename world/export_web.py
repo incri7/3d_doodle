@@ -93,45 +93,95 @@ class Loop:
         return (b - a) % self.L
 
 
-def places(meta, loop, o):
-    path = os.path.join(DATA, "places_ring.json")
-    pr = json.load(open(path))
+def match(name, text):
+    """Does a road / node name refer to this place? (OSM spells Ekantakuna 'Yekantakuna' too)"""
+    t = (text or "").lower().replace("yekanta", "ekanta").replace(" ", "")
+    return name.lower().replace(" ", "")[:6] in t
+
+
+def junctions(meta, loop, o, ring_ids):
+    """Where the city's main roads cross the Ring Road: (index, class, name)."""
+    tags = {e["id"]: e.get("tags", {}) for e in json.load(open(os.path.join(DATA, "roads.json")))["elements"]}
+    out = []
+    for rd in meta["roads"]:
+        if rd["id"] in ring_ids or rd["ring"] or rd["cls"] not in ("trunk", "primary", "secondary", "tertiary"):
+            continue
+        p = np.asarray(rd["pts"]) - o
+        if LineString(p).distance(loop.ring) > 25:           # roads end at the outer kerb, up to ~18 m out
+            continue
+        d = ring_loop.resample(p, 2.0, closed=False)
+        if len(d) < 2:
+            continue
+        k, off = loop.offset(d)
+        i = int(np.argmin(np.abs(off)))
+        t = np.gradient(d, axis=0)
+        t /= np.linalg.norm(t, axis=1)[:, None] + 1e-9
+        if abs(np.sum(t[i] * loop.T[k[i]])) > 0.8:          # runs along the Ring Road, not across
+            continue
+        t = tags.get(rd["id"], {})
+        out.append((int(k[i]), rd["cls"], " ".join(filter(None, (t.get("name"), t.get("name:en"), t.get("ref"))))))
+    return out
+
+
+def places(meta, loop, o, ring_ids):
+    """One board per place, at its chowk on the Ring Road:
+    1. a node named '<place> Chowk' (junction, bus stop, square) on the road,
+    2. else where a road named after the place crosses (nearest the place's own node),
+    3. else the nearest main-road crossing within 450 m of the place's node,
+    4. else level with the place's node."""
+    pr = json.load(open(os.path.join(DATA, "places_ring.json")))
     lonlat = lambda lon, lat: np.array([(lon - meta["lon0"]) * meta["kx"] - o[0], (lat - meta["lat0"]) * meta["ky"] - o[1]])
-    best = {}
+    dist = lambda a, b: min(loop.ds(loop.s[a], loop.s[b]), loop.ds(loop.s[b], loop.s[a]))
+    node = {}
     for h in pr["search"]:
         if h["q"] not in MAJOR:
             continue
-        p = lonlat(h["lon"], h["lat"])
-        k, off = loop.offset(p)
+        k, off = loop.offset(lonlat(h["lon"], h["lat"]))
         d = abs(float(off[0]))
         # a neighbourhood's node sits in its middle; the chowk it names is on the Ring Road
         if d > (750 if h["cls"] == "place" else 300):
             continue
-        if h["q"] not in best or d < best[h["q"]][1]:
-            best[h["q"]] = (int(k[0]), d)
+        if h["q"] not in node or d < node[h["q"]][1]:
+            node[h["q"]] = (int(k[0]), d)
+    J = junctions(meta, loop, o, ring_ids)
+    found = {}
+    for name in MAJOR:
+        guess = node.get(name, (None,))[0]
+        near = lambda ks: min(ks, key=lambda k: dist(k, guess)) if guess is not None else ks[0]
+        tagged = []
+        for h in pr.get("chowk", []):
+            if h["q"] != name or not match(name, h["name"]) or "chowk" not in (h["name"] or "").lower():
+                continue
+            k, off = loop.offset(lonlat(h["lon"], h["lat"]))
+            if abs(float(off[0])) < 150:
+                tagged.append(int(k[0]))
+        named = [k for k, cls, nm in J if match(name, nm) and (guess is None or dist(k, guess) < 1000)]
+        major = [k for k, cls, nm in J if guess is not None and dist(k, guess) < 450]
+        for how, ks in (("chowk node", tagged), ("road named after it", named), ("nearest crossing", major)):
+            if ks:
+                found[name] = (near(ks), how)
+                break
+        else:
+            if guess is not None:
+                found[name] = (guess, "place node")
     out = []
     for name in MAJOR:                      # priority order; keep boards >= 450 m apart
-        if name not in best:
+        if name not in found:
             continue
-        k = best[name][0]
-        s = loop.s[k]
-        if all(min(loop.ds(s, loop.s[q["k"]]), loop.ds(loop.s[q["k"]], s)) > 450 for q in out):
-            out.append({"k": k, "en": name, "ne": NE.get(name, name)})
+        k, how = found[name]
+        if all(dist(k, q["k"]) > 450 for q in out):
+            out.append({"k": k, "en": name, "ne": NE.get(name, name), "how": how})
     # fill long gaps with the neighbourhood names from reverse geocoding
-    names = []
     for r in pr["reverse"]:
         a, b = r["en"], r["ne"]
-        for key in ("neighbourhood", "quarter", "suburb"):
-            if a.get(key):
-                names.append((r["k"], a[key], b.get(key, a[key])))
-                break
-    for k2, en, ne in names:
-        k = k2 // 2                           # loop.npy is 2 m, export is 4 m
-        s = loop.s[k]
+        key = next((x for x in ("neighbourhood", "quarter", "suburb") if a.get(x)), None)
+        if not key:
+            continue
+        k, en, ne = r["k"] // 2, a[key], b.get(key, a[key])          # loop.npy is 2 m, export is 4 m
         if any(en.lower().startswith(q["en"].lower()[:5]) for q in out):
             continue
-        if all(min(loop.ds(s, loop.s[q["k"]]), loop.ds(loop.s[q["k"]], s)) > 1300 for q in out):
-            out.append({"k": int(k), "en": en, "ne": ne})
+        if all(dist(k, q["k"]) > 1300 for q in out):
+            out.append({"k": int(k), "en": en, "ne": ne, "how": "neighbourhood"})
     out.sort(key=lambda q: q["k"])
     return out
 
@@ -269,9 +319,9 @@ def main():
     print(f"loop {loop.L:.0f} m, {loop.n} points")
 
     # --- places ----------------------------------------------------------------------------------
-    pl = places(meta, loop, o)
+    pl = places(meta, loop, o, {e["id"] for e, _ in lines})
     for q in pl:
-        print(f"  {loop.s[q['k']]:7.0f} m  {q['en']}  {q['ne']}")
+        print(f"  {loop.s[q['k']]:7.0f} m  {q['en']}  {q['ne']}  ({q.pop('how')})")
     kk = {q["en"]: q["k"] for q in pl}
 
     # --- cross-section from the OSM lanes, per point and per side -------------------------------

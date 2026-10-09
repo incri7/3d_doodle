@@ -2,6 +2,9 @@
 (the Overpass mirrors were down). Writes data/ktm/places_ring.json:
 reverse geocodes every 100 m of the loop (English and Nepali) plus a
 search for each well-known Ring Road chowk.
+Each place's board goes at its chowk (world/export_web.py places): a node
+named "<place> Chowk", else where the road named after it crosses the Ring
+Road, else the nearest major crossing.
 Usage policy: one request per second, cached on disk."""
 import json, os, time, urllib.parse, urllib.request
 
@@ -65,8 +68,16 @@ def main():
                 found.append({"q": name, "lang": lang, "name": h.get("name"), "names": h.get("namedetails", {}),
                               "lat": float(h["lat"]), "lon": float(h["lon"]), "cls": h.get("category"), "type": h.get("type")})
         print(name, len(found), flush=True)
+    # the chowk itself: junction nodes, bus stops and squares named "<place> Chowk"
+    chowk = []
+    for name in CHOWKS:
+        u = (f"https://nominatim.openstreetmap.org/search?q={urllib.parse.quote(name + ' Chowk')}&format=jsonv2&limit=8"
+             f"&viewbox={vb}&bounded=1&namedetails=1&accept-language=en")
+        for h in get(u) or []:
+            chowk.append({"q": name, "name": h.get("name"), "lat": float(h["lat"]), "lon": float(h["lon"]),
+                          "cls": h.get("category"), "type": h.get("type")})
     json.dump(cache, open(CACHE, "w"))
-    json.dump({"reverse": rev, "search": found}, open(os.path.join(DATA, "places_ring.json"), "w"), ensure_ascii=False)
+    json.dump({"reverse": rev, "search": found, "chowk": chowk}, open(os.path.join(DATA, "places_ring.json"), "w"), ensure_ascii=False)
 
 
 if __name__ == "__main__":
