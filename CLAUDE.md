@@ -37,6 +37,8 @@ Output in `output/<model>/`: `hero.png`, `views.png` (front/right/back/top),
   `geo.flat_shape()` for vector decals; `geo.tube()` for bent rods.
 - `models/<name>.py`: one file per model; defines `build()` and optional `LIGHTING`.
 - `docs/reference/`: recipes and real-world dimensions (MIT, from cc-blender-skill).
+- `docs/image-to-3d-pipeline.md`: plan for the capture-to-clean-model pipeline
+  (design only, not built yet).
 
 ## Skills
 
