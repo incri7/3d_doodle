@@ -38,6 +38,16 @@ Output in `output/<model>/`: `hero.png`, `views.png` (front/right/back/top),
 - `models/<name>.py`: one file per model; defines `build()` and optional `LIGHTING`.
 - `docs/reference/`: recipes and real-world dimensions (MIT, from cc-blender-skill).
 
+## Skills
+
+- `new-model` (this repo's workflow) leads every modelling task.
+- `blender` (MIT, MartinRapcan/blender-claude-skill): headless bpy rules,
+  geometry, PBR, lighting and 4.x→5.x gotchas. Use as reference.
+- `blender-image-to-3d` (MIT, majidmanzarpour/blender-game-skills): gated,
+  reference-matched method for building from photos. Use its review and
+  silhouette checks, but keep this repo's layout: `models/<name>.py` +
+  `build.py`, not its `<asset>/build/` folders.
+
 ## Rules
 
 - Model in meters at real-world size. Look up
